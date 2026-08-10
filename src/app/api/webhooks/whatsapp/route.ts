@@ -107,15 +107,24 @@ export async function POST(req: NextRequest) {
       logger.warn("WhatsApp webhook errors in payload")
     }
 
-    const integration = await prisma.integration.findFirst({
-      where: { platform: "whatsapp", credentials: { contains: phoneNumberId } },
+    // Resolve the clinic from the phone number that received the webhook.
+    // Credentials are encrypted at rest so a plaintext search cannot match;
+    // the WhatsAppPhoneNumber record is the canonical clinic link.
+    const phoneRecord = await prisma.whatsAppPhoneNumber.findFirst({
+      where: { phoneNumberId },
     })
+    let clinicId: string | null = phoneRecord?.clinicId || null
 
-    if (!integration) {
-      return NextResponse.json({ received: true })
+    if (!clinicId) {
+      const integration = await prisma.integration.findFirst({
+        where: { platform: "whatsapp", credentials: { contains: phoneNumberId } },
+      })
+      clinicId = integration?.clinicId || null
     }
 
-    const clinicId = integration.clinicId
+    if (!clinicId) {
+      return NextResponse.json({ received: true })
+    }
 
     for (const status of statuses) {
       await prisma.whatsAppWebhookEvent.upsert({

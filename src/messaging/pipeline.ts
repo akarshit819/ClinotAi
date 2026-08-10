@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db"
 import { getConnector } from "./connectors/registry"
+import { getCredentials } from "@/integrations/token-store"
 import { resolvePatient } from "./patient/identity"
 import { runAiReceptionist } from "./ai/receptionist"
 import { shouldNotifyClinic, sendNotification } from "./notifications/service"
@@ -207,6 +208,7 @@ export async function processIncomingMessage(
         confidence: aiResult.confidence,
         status: aiResult.requiresClinic ? "waiting_clinic" : "ai_responded",
         sourceMessageId: outgoing.sourceMessageId,
+        metadata: { channelId: message.channelId, from: message.channelId },
         createdAt: new Date(),
       }
       connector.sendMessage(processedMsg, credentials).catch(console.error)
@@ -222,11 +224,17 @@ export async function processIncomingMessage(
 
 async function getPlatformCredentials(clinicId: string, platform: string): Promise<Record<string, string> | null> {
   try {
-    const integration = await prisma.integration.findUnique({
-      where: { clinicId_platform: { clinicId, platform } },
-    })
-    if (!integration?.enabled || !integration.credentials) return null
-    return JSON.parse(integration.credentials)
+    // Credentials are encrypted at rest; decrypt through the token store and
+    // map to the flat shape the connectors expect.
+    const creds = await getCredentials(clinicId, platform)
+    if (!creds?.accessToken) return null
+    const meta = creds.metadata || {}
+    return {
+      accessToken: creds.accessToken,
+      phoneNumberId: meta.phoneNumberId || "",
+      wabaId: meta.wabaId || "",
+      businessId: meta.businessId || "",
+    }
   } catch {
     return null
   }

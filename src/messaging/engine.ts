@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db"
 import { checkFeatureAccess } from "@/lib/billing"
 import { processIncomingMessage } from "./pipeline"
 import { getConnector } from "./connectors/registry"
+import { getCredentials as getStoredCredentials } from "@/integrations/token-store"
 import type { IncomingMessage, Platform } from "./types"
 
 export { processIncomingMessage } from "./pipeline"
@@ -90,6 +91,7 @@ export async function sendReply(
           content,
           status: "closed",
           createdAt: new Date(),
+          metadata: { channelId: conversation.channelId || "", from: conversation.channelId || "" },
         } as any,
         credentials,
       ).catch(console.error)
@@ -99,11 +101,17 @@ export async function sendReply(
 
 async function getCredentials(clinicId: string, platform: string): Promise<Record<string, string> | null> {
   try {
-    const integration = await prisma.integration.findUnique({
-      where: { clinicId_platform: { clinicId, platform } },
-    })
-    if (!integration?.enabled || !integration.credentials) return null
-    return JSON.parse(integration.credentials)
+    // Credentials are encrypted at rest; decrypt through the token store and
+    // map to the flat shape the connectors expect.
+    const creds = await getStoredCredentials(clinicId, platform)
+    if (!creds?.accessToken) return null
+    const meta = creds.metadata || {}
+    return {
+      accessToken: creds.accessToken,
+      phoneNumberId: meta.phoneNumberId || "",
+      wabaId: meta.wabaId || "",
+      businessId: meta.businessId || "",
+    }
   } catch {
     return null
   }

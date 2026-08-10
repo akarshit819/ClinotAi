@@ -34,7 +34,7 @@ interface IntegrationStatus {
 
 interface ActiveModal {
   platform: string
-  type: "telegram" | "email-smtp" | "confirm-disconnect"
+  type: "telegram" | "email-smtp" | "whatsapp" | "confirm-disconnect"
 }
 
 const PLATFORM_DETAILS: Record<string, {
@@ -54,7 +54,7 @@ const PLATFORM_DETAILS: Record<string, {
     bgLight: "bg-emerald-50",
     description: "Connect your WhatsApp Business account to handle patient messages via Meta Cloud API.",
     docUrl: "https://developers.facebook.com/docs/whatsapp",
-    authType: "oauth",
+    authType: "credentials",
   },
   instagram: {
     name: "Instagram",
@@ -154,6 +154,9 @@ export default function IntegrationsPage() {
   const [smtpForm, setSmtpForm] = useState({
     host: "", port: "587", username: "", password: "", fromEmail: "", fromName: "",
   })
+  const [whatsappForm, setWhatsappForm] = useState({
+    accessToken: "", phoneNumberId: "", wabaId: "", businessId: "",
+  })
 
   const fetchIntegrations = useCallback(async () => {
     setLoading(true)
@@ -209,7 +212,7 @@ export default function IntegrationsPage() {
     }
 
     if (authType === "credentials") {
-      setActiveModal({ platform, type: "email-smtp" })
+      setActiveModal({ platform, type: platform === "whatsapp" ? "whatsapp" : "email-smtp" })
       return
     }
   }
@@ -258,6 +261,36 @@ export default function IntegrationsPage() {
       }
     } catch {
       setStatusError("Network error connecting SMTP")
+    } finally {
+      setConnecting(null)
+    }
+  }
+
+  const handleWhatsAppConnect = async () => {
+    const { accessToken, phoneNumberId, wabaId, businessId } = whatsappForm
+    if (!accessToken.trim() || !phoneNumberId.trim() || !wabaId.trim()) return
+    setConnecting("whatsapp")
+    setActiveModal(null)
+    try {
+      const res = await apiFetch("/api/integrations/whatsapp/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken: accessToken.trim(),
+          phoneNumberId: phoneNumberId.trim(),
+          wabaId: wabaId.trim(),
+          businessId: businessId.trim() || undefined,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setWhatsappForm({ accessToken: "", phoneNumberId: "", wabaId: "", businessId: "" })
+        await fetchIntegrations()
+      } else {
+        setStatusError(data.error || "Failed to connect WhatsApp")
+      }
+    } catch {
+      setStatusError("Network error connecting WhatsApp")
     } finally {
       setConnecting(null)
     }
@@ -572,6 +605,41 @@ export default function IntegrationsPage() {
               <Button variant="primary" size="sm" onClick={handleSmtpConnect}
                 disabled={!smtpForm.host || !smtpForm.username || !smtpForm.password || !smtpForm.fromEmail}>
                 Connect
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeModal?.type === "whatsapp" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setActiveModal(null)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-navy-900 mb-1">Connect WhatsApp Business</h3>
+            <p className="text-xs text-navy-400 mb-4">
+              Paste your existing Meta WhatsApp Cloud API credentials from the Meta Developer Dashboard. The values are
+              validated against the Graph API and encrypted before storing.
+            </p>
+            <div className="space-y-3">
+              <input type="password" placeholder="System User Access Token" value={whatsappForm.accessToken}
+                onChange={(e) => setWhatsappForm({ ...whatsappForm, accessToken: e.target.value })}
+                className="w-full px-3 py-2.5 text-sm border border-navy-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-navy-400" />
+              <input type="text" placeholder="Phone Number ID" value={whatsappForm.phoneNumberId}
+                onChange={(e) => setWhatsappForm({ ...whatsappForm, phoneNumberId: e.target.value })}
+                className="w-full px-3 py-2.5 text-sm border border-navy-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-navy-400" />
+              <input type="text" placeholder="WABA ID (WhatsApp Business Account ID)" value={whatsappForm.wabaId}
+                onChange={(e) => setWhatsappForm({ ...whatsappForm, wabaId: e.target.value })}
+                className="w-full px-3 py-2.5 text-sm border border-navy-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-navy-400" />
+              <input type="text" placeholder="Business ID (optional)" value={whatsappForm.businessId}
+                onChange={(e) => setWhatsappForm({ ...whatsappForm, businessId: e.target.value })}
+                className="w-full px-3 py-2.5 text-sm border border-navy-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-navy-400" />
+            </div>
+            <div className="flex gap-2 justify-end mt-4">
+              <Button variant="ghost" size="sm" onClick={() => { setActiveModal(null); setWhatsappForm({ accessToken: "", phoneNumberId: "", wabaId: "", businessId: "" }) }}>
+                Cancel
+              </Button>
+              <Button variant="primary" size="sm" onClick={handleWhatsAppConnect}
+                disabled={!whatsappForm.accessToken.trim() || !whatsappForm.phoneNumberId.trim() || !whatsappForm.wabaId.trim() || connecting === "whatsapp"}>
+                {connecting === "whatsapp" ? "Connecting..." : "Connect"}
               </Button>
             </div>
           </div>

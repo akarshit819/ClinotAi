@@ -386,6 +386,58 @@ export async function testConnection(
   return { success: true, latencyMs }
 }
 
+/**
+ * Validates a manually supplied WhatsApp Cloud API configuration against the
+ * Graph API. Confirms the access token can actually reach the given phone
+ * number and WABA, and returns their display details for storage.
+ */
+export async function validateManualConfig(
+  config: WhatsAppConfig,
+): Promise<{ ok: boolean; error?: string; phoneNumber?: PhoneNumberInfo; waba?: WABAInfo }> {
+  const [phoneRes, wabaRes] = await Promise.all([
+    graphRequest(`/${config.phoneNumberId}`, {
+      accessToken: config.accessToken,
+      params: { fields: "id,display_phone_number,verified_name,quality_rating,code_verification_status,status" },
+    }),
+    graphRequest(`/${config.wabaId}`, {
+      accessToken: config.accessToken,
+      params: { fields: "id,name,currency,timezone_id,message_template_namespace" },
+    }),
+  ])
+
+  if (!phoneRes.ok) {
+    return {
+      ok: false,
+      error: phoneRes.data.error?.message || `Phone Number ID ${config.phoneNumberId} is not accessible with this token`,
+    }
+  }
+  if (!wabaRes.ok) {
+    return {
+      ok: false,
+      error: wabaRes.data.error?.message || `WABA ID ${config.wabaId} is not accessible with this token`,
+    }
+  }
+
+  return {
+    ok: true,
+    phoneNumber: {
+      id: phoneRes.data.id || config.phoneNumberId,
+      displayPhoneNumber: phoneRes.data.display_phone_number || "",
+      verifiedName: phoneRes.data.verified_name || "",
+      qualityRating: phoneRes.data.quality_rating || "unknown",
+      codeVerificationStatus: phoneRes.data.code_verification_status,
+      status: phoneRes.data.status,
+    },
+    waba: {
+      id: wabaRes.data.id || config.wabaId,
+      name: wabaRes.data.name,
+      currency: wabaRes.data.currency,
+      timezoneId: wabaRes.data.timezone_id,
+      messageTemplateNamespace: wabaRes.data.message_template_namespace,
+    },
+  }
+}
+
 export function parseWebhookPayload(payload: any): WhatsAppWebhookPayload | null {
   if (!payload || payload.object !== "whatsapp_business_account") return null
   return payload as WhatsAppWebhookPayload
