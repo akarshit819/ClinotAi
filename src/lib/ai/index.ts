@@ -3,7 +3,7 @@ import { decrypt } from "@/lib/encryption"
 import { logger } from "@/lib/logger"
 import { AI } from "@/config/constants"
 import { buildSystemPrompt } from "./prompt"
-import { callOpenAI, callAnthropic, callGemini, callGroq, callOpenRouter, callBuildPicoApps } from "./providers"
+import { callOpenAI, callAnthropic, callGemini, callGroq, callOpenRouter } from "./providers"
 import { generateFallbackResponse } from "./fallback"
 import { searchKnowledge, formatRAGContext, hasHighConfidenceMatch, type KnowledgeEntry } from "./rag"
 import {
@@ -59,14 +59,16 @@ async function getProviderConfig(clinicId: string): Promise<{ config: ProviderCo
 
   if (clinic.useClinotAi) {
     const provider = clinic.aiProvider === "clinot" ? "openai" : clinic.aiProvider
-    const apiKey = getClinotApiKey(provider)
+    // OpenRouter is the primary platform provider whenever its key is configured.
+    const resolvedProvider = process.env.OPENROUTER_API_KEY ? "openrouter" : provider
+    const apiKey = getClinotApiKey(resolvedProvider)
     if (!apiKey) {
-      logger.warn(`Clinot AI provider ${provider} has no API key configured`, { clinicId })
+      logger.warn(`Clinot AI provider ${resolvedProvider} has no API key configured`, { clinicId })
       return { config: null, source: "clinot" }
     }
     return {
       config: {
-        provider,
+        provider: resolvedProvider,
         apiKey,
         model: AI.defaultModel,
         temperature: AI.defaultTemperature,
@@ -124,21 +126,6 @@ async function callProvider(config: ProviderConfig, messages: ChatMessage[]): Pr
 
 function getPicoUrl(): string {
   return process.env.PICO_LLM_API_URL?.trim() || ""
-}
-
-async function callPicoFallback(fullMessages: ChatMessage[]): Promise<string | null> {
-  const url = getPicoUrl()
-  if (!url) return null
-  try {
-    const text = await callBuildPicoApps({ url }, fullMessages)
-    if (text) {
-      logger.info("AI response generated via BuildPicoApps")
-      return text
-    }
-  } catch (picoError) {
-    logger.error("BuildPicoApps provider failed", { error: picoError instanceof Error ? picoError.message : "Unknown error" })
-  }
-  return null
 }
 
 export async function generateAIResponse(
@@ -213,12 +200,6 @@ export async function generateAIResponse(
 
     const systemMessage: ChatMessage = { role: "system", content: systemPrompt }
     const fullMessages = [systemMessage, ...messages]
-
-    // BuildPicoApps is the primary AI provider when configured.
-    if (getPicoUrl()) {
-      const picoReply = await callPicoFallback(fullMessages)
-      if (picoReply) return picoReply
-    }
 
     if (providerResult.config && providerResult.source) {
       try {
