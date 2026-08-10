@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { authenticateUser, createTokenCookie } from "@/lib/auth"
 import { checkRateLimit, rateLimitKey, rateLimitHeaders } from "@/lib/security/rate-limit"
+import { normalizeEmail } from "@/lib/email-utils"
+import { logger } from "@/lib/logger"
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,9 +17,14 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    const body = await req.json()
-    const email = (body.email || "").toLowerCase().trim()
-    const password = body.password || ""
+    let body: any
+    try {
+      body = await req.json()
+    } catch {
+      return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
+    }
+    const email = normalizeEmail(body.email ?? "")
+    const password = typeof body.password === "string" ? body.password : ""
     const rememberMe = body.rememberMe === true
 
     if (!email || !password) {
@@ -45,7 +52,7 @@ export async function POST(req: NextRequest) {
 
     return response
   } catch (err: any) {
-    console.error("Login error:", err)
+    logger.error("Login error", { error: err?.message })
     return NextResponse.json({ error: "Login failed. Please try again." }, { status: 500 })
   }
 }

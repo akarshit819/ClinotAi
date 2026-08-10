@@ -4,6 +4,7 @@ import { useState, useEffect, FormEvent } from "react"
 import { useRouter } from "next/navigation"
 import { Loader2, CheckCircle, ArrowRight, Building2, Clock, Globe, Phone, Palette } from "lucide-react"
 import { Button } from "@/components/ui/Button"
+import { apiFetch } from "@/lib/client-auth"
 
 interface ClinicData {
   name: string
@@ -68,7 +69,7 @@ export default function OnboardingPage() {
   })
 
   useEffect(() => {
-    fetch("/api/onboarding")
+    apiFetch("/api/onboarding")
       .then((r) => r.json())
       .then((d) => {
         if (d.clinic) {
@@ -88,7 +89,7 @@ export default function OnboardingPage() {
     setSaving(true)
     setError(null)
     try {
-      const res = await fetch("/api/onboarding", {
+      const res = await apiFetch("/api/onboarding", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step, data: stepData || data }),

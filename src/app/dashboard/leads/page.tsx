@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button"
 import { Badge } from "@/components/ui/Badge"
 import { Users, Loader2, Mail, Phone, Search, X, Download, ArrowUpDown, CalendarCheck, XCircle, PhoneCall } from "lucide-react"
 import { formatDateTime } from "@/lib/utils"
+import { apiFetch } from "@/lib/client-auth"
 
 interface Lead {
   id: string
@@ -32,14 +33,14 @@ export default function LeadsPage() {
   const [sortAsc, setSortAsc] = useState(false)
 
   useEffect(() => {
-    fetch("/api/leads")
+    apiFetch("/api/leads")
       .then((r) => r.json())
       .then(setLeads)
       .finally(() => setLoading(false))
   }, [])
 
   const updateStatus = async (id: string, status: string) => {
-    await fetch("/api/leads", {
+    await apiFetch("/api/leads", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, status }),

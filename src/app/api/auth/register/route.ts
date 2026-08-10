@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
-import { registerClinic, createTokenCookie, createEmailVerificationToken } from "@/lib/auth"
+import { registerClinic, createTokenCookie } from "@/lib/auth"
 import { checkRateLimit, rateLimitKey, rateLimitHeaders } from "@/lib/security/rate-limit"
-import { sanitizeHtml, validateEmail, validateName } from "@/lib/security/sanitize"
+import { sanitizeHtml, validateName } from "@/lib/security/sanitize"
+import { normalizeEmail, isValidEmail } from "@/lib/email-utils"
+import { logger } from "@/lib/logger"
 
 export async function POST(req: NextRequest) {
   try {
@@ -16,11 +18,16 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    const body = await req.json()
-    const name = sanitizeHtml(body.name || "").trim()
-    const email = (body.email || "").toLowerCase().trim()
-    const password = body.password || ""
-    const clinicName = sanitizeHtml(body.clinicName || "").trim()
+    let body: any
+    try {
+      body = await req.json()
+    } catch {
+      return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
+    }
+    const name = sanitizeHtml(body.name ?? "").trim()
+    const email = normalizeEmail(body.email ?? "")
+    const password = typeof body.password === "string" ? body.password : ""
+    const clinicName = sanitizeHtml(body.clinicName ?? "").trim()
 
     if (!name || name.length < 1) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 })
@@ -28,7 +35,7 @@ export async function POST(req: NextRequest) {
     if (!validateName(name)) {
       return NextResponse.json({ error: "Name contains invalid characters" }, { status: 400 })
     }
-    if (!email || !validateEmail(email)) {
+    if (!email || !isValidEmail(email)) {
       return NextResponse.json({ error: "Valid email is required" }, { status: 400 })
     }
     if (!clinicName) {
@@ -54,7 +61,7 @@ export async function POST(req: NextRequest) {
 
     return response
   } catch (err: any) {
-    console.error("Registration error:", err)
+    logger.error("Registration error", { error: err?.message })
     return NextResponse.json({ error: "Registration failed. Please try again." }, { status: 500 })
   }
 }

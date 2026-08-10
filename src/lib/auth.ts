@@ -1,7 +1,10 @@
 import crypto from "crypto"
+import bcrypt from "bcryptjs"
 import { argon2id } from "hash-wasm"
 import { prisma } from "./db"
 import { getJwtSecret, getEncryptionKey, isProduction } from "./env"
+import { normalizeEmail } from "./email-utils"
+import { getDefaultPermissions } from "./permissions"
 import { recordAuditEvent } from "./security/audit"
 
 export interface JWTPayload {
@@ -24,19 +27,18 @@ const RESET_TOKEN_EXPIRY = 60 * 60 * 1000
 const VERIFY_TOKEN_EXPIRY = 24 * 60 * 60 * 1000
 
 function base64url(data: string): string {
-  return btoa(data).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")
+  return Buffer.from(data).toString("base64url")
 }
 
 function base64urlDecode(str: string): string {
-  str = str.replace(/-/g, "+").replace(/_/g, "/").padEnd(str.length + ((4 - (str.length % 4)) % 4), "=")
-  return atob(str)
+  return Buffer.from(str, "base64url").toString("utf8")
 }
 
 async function hmacSign(data: string, secret: string): Promise<string> {
   const encoder = new TextEncoder()
   const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
   const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(data))
-  return base64url(Array.from(new Uint8Array(sig), (b) => String.fromCharCode(b)).join(""))
+  return Buffer.from(new Uint8Array(sig)).toString("base64url")
 }
 
 function generateRandomToken(bytes: number = TOKEN_BYTES): string {
@@ -45,6 +47,10 @@ function generateRandomToken(bytes: number = TOKEN_BYTES): string {
 
 function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex")
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: string }).code === "P2002"
 }
 
 export async function hashPassword(password: string): Promise<string> {
@@ -79,12 +85,38 @@ async function argon2Verify(password: string, hash: string): Promise<boolean> {
   return hash === expected
 }
 
-export async function comparePassword(password: string, passwordHash: string): Promise<boolean> {
-  try {
-    return argon2Verify(password, passwordHash)
-  } catch {
-    return false
+export interface PasswordVerificationResult {
+  ok: boolean
+  needsRehash: boolean
+}
+
+export async function verifyPassword(password: string, passwordHash: string): Promise<PasswordVerificationResult> {
+  if (!password || !passwordHash) return { ok: false, needsRehash: false }
+
+  if (passwordHash.startsWith("$argon2")) {
+    try {
+      const ok = await argon2Verify(password, passwordHash)
+      return { ok, needsRehash: false }
+    } catch {
+      return { ok: false, needsRehash: false }
+    }
   }
+
+  if (passwordHash.startsWith("$2a$") || passwordHash.startsWith("$2b$") || passwordHash.startsWith("$2y$")) {
+    try {
+      const ok = await bcrypt.compare(password, passwordHash)
+      return { ok, needsRehash: ok }
+    } catch {
+      return { ok: false, needsRehash: false }
+    }
+  }
+
+  return { ok: false, needsRehash: false }
+}
+
+export async function comparePassword(password: string, passwordHash: string): Promise<boolean> {
+  const result = await verifyPassword(password, passwordHash)
+  return result.ok
 }
 
 export function checkPasswordStrength(password: string): { valid: boolean; message: string } {
@@ -173,7 +205,7 @@ export async function createSession(
       sessionId,
       tokenHash: hashToken(refreshToken),
       family: refreshFamily,
-      expiresAt: new Date(Date.now() + REFRESH_TOKEN_EXPIRY * 1000),
+      expiresAt: new Date(Date.now() + sessionExpiry * 1000),
     },
   })
 
@@ -205,6 +237,9 @@ export async function refreshSession(
 
   if (!stored) return null
 
+  const session = await prisma.session.findUnique({ where: { id: sessionId } })
+  if (!session || !session.isActive || session.expiresAt < new Date()) return null
+
   await prisma.refreshToken.updateMany({
     where: { family: stored.family, isRevoked: false },
     data: { isRevoked: true, revokedAt: new Date() },
@@ -220,7 +255,7 @@ export async function refreshSession(
       sessionId,
       tokenHash: hashToken(newRefreshToken),
       family: newRefreshFamily,
-      expiresAt: new Date(Date.now() + REFRESH_TOKEN_EXPIRY * 1000),
+      expiresAt: session.expiresAt,
     },
   })
 
@@ -250,7 +285,7 @@ export async function refreshSession(
     accessToken,
     refreshToken: `${sessionId}.${newRefreshToken}`,
     sessionId,
-    expiresAt: stored.expiresAt,
+    expiresAt: session.expiresAt,
   }
 }
 
@@ -288,7 +323,7 @@ export async function authenticateUser(
   userAgent: string,
   rememberMe: boolean = false,
 ): Promise<{ user: any; session: SessionTokens } | { error: string; status: number }> {
-  const normalizedEmail = email.toLowerCase().trim()
+  const normalizedEmail = normalizeEmail(email)
 
   const user = await prisma.user.findUnique({
     where: { email: normalizedEmail },
@@ -311,8 +346,8 @@ export async function authenticateUser(
     return { error: `Account locked. Try again in ${remaining} minutes.`, status: 429 }
   }
 
-  const valid = await comparePassword(password, user.passwordHash)
-  if (!valid) {
+  const verification = await verifyPassword(password, user.passwordHash)
+  if (!verification.ok) {
     const attempts = user.failedLoginAttempts + 1
     const updateData: any = { failedLoginAttempts: attempts }
     if (attempts >= MAX_LOGIN_ATTEMPTS) {
@@ -324,10 +359,11 @@ export async function authenticateUser(
     return { error: "Invalid email or password", status: 401 }
   }
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { failedLoginAttempts: 0, isLocked: false, lockedUntil: null, lastLoginAt: new Date(), lastLoginIp: ip },
-  })
+  const updateData: any = { failedLoginAttempts: 0, isLocked: false, lockedUntil: null, lastLoginAt: new Date(), lastLoginIp: ip }
+  if (verification.needsRehash) {
+    updateData.passwordHash = await hashPassword(password)
+  }
+  await prisma.user.update({ where: { id: user.id }, data: updateData })
 
   const session = await createSession(user.id, user.clinicId, rememberMe, ip, userAgent)
 
@@ -340,7 +376,7 @@ export async function authenticateUser(
 }
 
 export async function checkAccountLockout(email: string): Promise<{ locked: boolean; remainingMinutes?: number }> {
-  const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } })
+  const user = await prisma.user.findUnique({ where: { email: normalizeEmail(email) } })
   if (!user || !user.isLocked || !user.lockedUntil) return { locked: false }
   if (user.lockedUntil <= new Date()) {
     await prisma.user.update({ where: { id: user.id }, data: { isLocked: false, lockedUntil: null } })
@@ -436,6 +472,36 @@ export async function verifyAccessToken(token: string): Promise<JWTPayload | nul
   return payload
 }
 
+const DEFAULT_ROLE_NAMES = ["owner", "admin", "staff"]
+
+export async function ensureClinicRoles(tx: any, clinicId: string): Promise<Record<string, string>> {
+  const roleIds: Record<string, string> = {}
+  for (const roleName of DEFAULT_ROLE_NAMES) {
+    const permissions = await tx.permission.findMany({
+      where: { code: { in: getDefaultPermissions(roleName) } },
+      select: { id: true },
+    })
+    const role = await tx.role.create({
+      data: {
+        clinicId,
+        name: roleName,
+        description: `Default ${roleName} role`,
+        isSystem: true,
+      },
+    })
+    for (const perm of permissions) {
+      await tx.rolePermission.create({ data: { roleId: role.id, permissionId: perm.id } })
+    }
+    roleIds[roleName] = role.id
+  }
+  return roleIds
+}
+
+function generateClinicSlug(clinicName: string): string {
+  const base = clinicName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+  return `${base || "clinic"}-${generateRandomToken(4)}`
+}
+
 export async function registerClinic(data: {
   name: string
   email: string
@@ -444,40 +510,61 @@ export async function registerClinic(data: {
   ip: string
   userAgent: string
 }): Promise<{ user: any; session: SessionTokens } | { error: string; status: number }> {
-  const normalizedEmail = data.email.toLowerCase().trim()
+  const email = normalizeEmail(data.email)
+  const name = data.name.trim()
+  const clinicName = data.clinicName.trim()
+
   const strength = checkPasswordStrength(data.password)
   if (!strength.valid) return { error: strength.message, status: 400 }
 
-  const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } })
-  if (existing) return { error: "An account with this email already exists", status: 409 }
+  if (!email) return { error: "Valid email is required", status: 400 }
+  if (!clinicName) return { error: "Clinic name is required", status: 400 }
 
-  const slug = data.clinicName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-" + generateRandomToken(4)
+  const existing = await prisma.user.findUnique({ where: { email } })
+  if (existing) return { error: "An account with this email already exists. Please log in instead.", status: 409 }
 
   const passwordHash = await hashPassword(data.password)
+  const slug = generateClinicSlug(clinicName)
 
-  const clinic = await prisma.clinic.create({
-    data: { name: data.clinicName, slug },
-  })
+  let user: any
+  let clinic: any
 
-  const ownerRole = await prisma.role.findFirst({ where: { clinicId: clinic.id, name: "owner" } })
-  if (!ownerRole) return { error: "Role configuration error", status: 500 }
+  try {
+    const created = await prisma.$transaction(async (tx) => {
+      const newClinic = await tx.clinic.create({
+        data: { name: clinicName, slug },
+      })
 
-  const user = await prisma.user.create({
-    data: {
-      clinicId: clinic.id,
-      email: normalizedEmail,
-      passwordHash,
-      name: data.name,
-      roleId: ownerRole.id,
-    },
-    include: { role: true },
-  })
+      const roleIds = await ensureClinicRoles(tx, newClinic.id)
+
+      const newUser = await tx.user.create({
+        data: {
+          clinicId: newClinic.id,
+          email,
+          passwordHash,
+          name,
+          roleId: roleIds.owner,
+        },
+        include: { role: true },
+      })
+
+      return { user: newUser, clinic: newClinic }
+    })
+
+    user = created.user
+    clinic = created.clinic
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      return { error: "An account with this email already exists. Please log in instead.", status: 409 }
+    }
+    throw error
+  }
 
   const session = await createSession(user.id, clinic.id, false, data.ip, data.userAgent)
 
   await recordAuditEvent({
     action: "signup", clinicId: clinic.id, userId: user.id, ip: data.ip, userAgent: data.userAgent,
-    details: { email: normalizedEmail, clinicName: data.clinicName },
+    details: { email, clinicName },
     severity: "info",
   })
 

@@ -27,6 +27,7 @@ import {
 import { Card, CardContent, CardHeader } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
 import { Badge } from "@/components/ui/Badge"
+import { apiFetch } from "@/lib/client-auth"
 
 type PlanId = "starter" | "professional" | "enterprise"
 type SubscriptionStatus = "active" | "past_due" | "cancelled" | "incomplete" | "unpaid" | "paused" | "expired" | "inactive"
@@ -140,8 +141,8 @@ export default function BillingPage() {
   const fetchData = useCallback(async () => {
     try {
       const [billingRes, usageRes] = await Promise.all([
-        fetch("/api/billing"),
-        fetch("/api/billing/usage"),
+        apiFetch("/api/billing"),
+        apiFetch("/api/billing/usage"),
       ])
       if (billingRes.ok) {
         const billingData = await billingRes.json()
@@ -164,7 +165,7 @@ export default function BillingPage() {
     setActionLoading(action)
     setError(null)
     try {
-      const res = await fetch(url, { method: "POST", ...options })
+      const res = await apiFetch(url, { method: "POST", ...options })
       const body = await res.json()
       if (!res.ok) throw new Error(body.error || "Action failed")
       if (body.url) {

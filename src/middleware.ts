@@ -1,25 +1,29 @@
 import { NextRequest, NextResponse } from "next/server"
 import { checkRateLimit, rateLimitKey, rateLimitHeaders, type RateLimitScope } from "@/lib/security/rate-limit"
 import { getCSPDirectives, getSecurityHeaders } from "@/lib/security/headers"
-import { isProduction, getEnv } from "@/lib/env"
+import { isProduction } from "@/lib/env"
+import { isPublicPath, shouldBypassCsrf, ONBOARDING_EXEMPT_PATHS } from "@/lib/routing"
 
-const PUBLIC_PATHS = [
-  "/", "/login", "/signup", "/_next", "/favicon.ico", "/robots.txt", "/sitemap.xml",
-  "/manifest.webmanifest", "/verify-email", "/api/health", "/api/webhooks",
-  "/api/auth/login", "/api/auth/register", "/api/auth/forgot-password", "/api/auth/reset-password",
-  "/api/chat", "/api/widget", "/api/checkout",
-]
-
-const ONBOARDING_EXEMPT_PATHS = ["/api/onboarding", "/api/auth/logout", "/api/auth/me", "/api/auth/refresh"]
-
-const CSRF_EXEMPT_PATHS = ["/api/auth/login", "/api/auth/register", "/api/auth/forgot-password", "/api/auth/reset-password", "/api/chat", "/api/widget", "/api/webhooks", "/api/checkout"]
-
-function isPublicPath(pathname: string): boolean {
-  return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))
+function isMissingOrigin(request: NextRequest): boolean {
+  if (!request.headers.get("origin") && !request.headers.get("referer")) return true
+  return false
 }
 
-function shouldBypassCsrf(pathname: string): boolean {
-  return CSRF_EXEMPT_PATHS.some((p) => pathname.startsWith(p))
+function isSameOrigin(request: NextRequest, appUrl: string): boolean {
+  const origin = (request.headers.get("origin") || "").replace(/\/+$/, "")
+  const referer = (request.headers.get("referer") || "").replace(/\/+$/, "")
+  const normalizedAppUrl = appUrl.replace(/\/+$/, "")
+
+  if (normalizedAppUrl && origin.startsWith(normalizedAppUrl)) return true
+  if (normalizedAppUrl && referer.startsWith(normalizedAppUrl)) return true
+
+  const host = request.headers.get("host")
+  if (host && origin) {
+    const protocol = request.nextUrl.protocol || "https:"
+    if (origin === `${protocol}//${host}`) return true
+  }
+
+  return false
 }
 
 export async function middleware(request: NextRequest) {
@@ -64,12 +68,15 @@ export async function middleware(request: NextRequest) {
   }
 
   if (pathname.startsWith("/api/") && !shouldBypassCsrf(pathname) && !["GET", "HEAD", "OPTIONS"].includes(method)) {
-    const csrfToken = request.headers.get("x-csrf-token")
-    const origin = request.headers.get("origin")
-    const referer = request.headers.get("referer")
-    const appUrl = getEnv("NEXT_PUBLIC_APP_URL")
-    if (origin && !origin.startsWith(appUrl) && !referer?.startsWith(appUrl)) {
-      return NextResponse.json({ error: "CSRF validation failed" }, { status: 403 })
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || ""
+    if (!isMissingOrigin(request)) {
+      const origin = request.headers.get("origin")
+      const referer = request.headers.get("referer")
+      if (!isSameOrigin(request, appUrl)) {
+        if (appUrl || origin || referer) {
+          return NextResponse.json({ error: "CSRF validation failed" }, { status: 403 })
+        }
+      }
     }
   }
 

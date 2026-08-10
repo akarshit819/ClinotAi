@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button"
 import { Badge } from "@/components/ui/Badge"
 import { BookOpen, Loader2, Search, X, Plus, Eye, Globe, Trash2, Edit3 } from "lucide-react"
 import { formatDateTime } from "@/lib/utils"
+import { apiFetch } from "@/lib/client-auth"
 
 interface KbItem {
   id: string
@@ -27,7 +28,7 @@ export default function KnowledgePage() {
   const [addForm, setAddForm] = useState({ question: "", answer: "", category: "" })
 
   useEffect(() => {
-    fetch("/api/knowledge")
+    apiFetch("/api/knowledge")
       .then((r) => r.json())
       .then(setItems)
       .finally(() => setLoading(false))
@@ -44,7 +45,7 @@ export default function KnowledgePage() {
   })
 
   const saveEdit = async (id: string) => {
-    await fetch("/api/knowledge", {
+    await apiFetch("/api/knowledge", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, ...editForm }),
@@ -54,12 +55,12 @@ export default function KnowledgePage() {
   }
 
   const deleteItem = async (id: string) => {
-    await fetch("/api/knowledge", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })
+    await apiFetch("/api/knowledge", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })
     setItems((prev) => prev.filter((i) => i.id !== id))
   }
 
   const addItem = async () => {
-    const res = await fetch("/api/knowledge", {
+    const res = await apiFetch("/api/knowledge", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(addForm),

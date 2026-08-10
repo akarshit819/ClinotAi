@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button"
 import { Badge } from "@/components/ui/Badge"
 import { Calendar as CalendarIcon, Loader2, ChevronLeft, ChevronRight, Clock, User, Phone, X, CheckCircle, XCircle } from "lucide-react"
 import { formatDateTime } from "@/lib/utils"
+import { apiFetch } from "@/lib/client-auth"
 
 const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const monthLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -44,14 +45,14 @@ export default function AppointmentsPage() {
   const [selected, setSelected] = useState<Appointment | null>(null)
 
   useEffect(() => {
-    fetch("/api/appointments")
+    apiFetch("/api/appointments")
       .then((r) => r.json())
       .then(setAppointments)
       .finally(() => setLoading(false))
   }, [])
 
   const updateStatus = async (id: string, status: string) => {
-    await fetch("/api/appointments", {
+    await apiFetch("/api/appointments", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, status }),

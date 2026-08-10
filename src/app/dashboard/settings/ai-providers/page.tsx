@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/Button"
 import { Card, CardContent } from "@/components/ui/Card"
 import { Badge } from "@/components/ui/Badge"
 import { Bot, CheckCircle, ChevronDown, Key, RefreshCw, Trash2, Zap } from "lucide-react"
+import { apiFetch } from "@/lib/client-auth"
 
 type BYOProvider = "openai" | "anthropic" | "gemini" | "groq" | "openrouter"
 
@@ -37,13 +38,13 @@ const PROVIDER_ICONS: Record<string, string> = {
 }
 
 async function fetchData(): Promise<PageData> {
-  const res = await fetch("/api/settings/ai-providers")
+  const res = await apiFetch("/api/settings/ai-providers")
   if (!res.ok) throw new Error("Failed to load")
   return res.json()
 }
 
 async function updateSetting(body: Record<string, unknown>) {
-  const res = await fetch("/api/settings/ai-providers", {
+  const res = await apiFetch("/api/settings/ai-providers", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -132,7 +133,7 @@ export default function AIProvidersPage() {
     setError("")
 
     try {
-      const res = await fetch("/api/api-config/test", {
+      const res = await apiFetch("/api/api-config/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider, apiKey: key }),

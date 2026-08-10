@@ -4,7 +4,7 @@ import { checkRateLimit, rateLimitKey } from "@/lib/security/rate-limit"
 import { prisma } from "@/lib/db"
 import { sendEmail } from "@/lib/email"
 import { getEnv } from "@/lib/env"
-import { validateEmail } from "@/lib/security/sanitize"
+import { normalizeEmail, isValidEmail } from "@/lib/email-utils"
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,10 +15,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Too many requests. Try again later." }, { status: 429 })
     }
 
-    const body = await req.json()
-    const email = (body.email || "").toLowerCase().trim()
+    let body: any
+    try {
+      body = await req.json()
+    } catch {
+      return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
+    }
+    const email = normalizeEmail(body.email ?? "")
 
-    if (!email || !validateEmail(email)) {
+    if (!email || !isValidEmail(email)) {
       return NextResponse.json({ error: "Valid email is required" }, { status: 400 })
     }
 

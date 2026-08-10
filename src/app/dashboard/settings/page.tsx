@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button"
 import { Loader2, Save, Building2, Clock, Globe, Bell, Bot, Palette, Moon, Sun } from "lucide-react"
 import { useTheme } from "@/contexts/ThemeContext"
 import Link from "next/link"
+import { apiFetch } from "@/lib/client-auth"
 
 interface Settings {
   clinicName: string
@@ -33,7 +34,7 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("general")
 
   useEffect(() => {
-    fetch("/api/settings")
+    apiFetch("/api/settings")
       .then((r) => r.json())
       .then((data) => { if (data) setSettings(data) })
       .finally(() => setLoading(false))
@@ -41,7 +42,7 @@ export default function SettingsPage() {
 
   const save = async () => {
     setSaving(true)
-    await fetch("/api/settings", {
+    await apiFetch("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(settings),

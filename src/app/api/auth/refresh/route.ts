@@ -23,12 +23,14 @@ export async function POST(req: NextRequest) {
       return response
     }
 
+    const remainingSeconds = Math.max(1, Math.floor((result.expiresAt.getTime() - Date.now()) / 1000))
+
     const response = NextResponse.json({
       session: { id: result.sessionId, expiresAt: result.expiresAt },
     })
 
     response.headers.append("Set-Cookie", createTokenCookie("access_token", result.accessToken, 900, "Lax"))
-    response.headers.append("Set-Cookie", createTokenCookie("refresh_token", result.refreshToken, 2592000, "Lax"))
+    response.headers.append("Set-Cookie", createTokenCookie("refresh_token", result.refreshToken, remainingSeconds, "Lax"))
 
     return response
   } catch {

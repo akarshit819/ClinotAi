@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { Card, CardContent } from "@/components/ui/Card"
 import { MessageSquare, Users, CalendarCheck, Clock, TrendingUp, Loader2 } from "lucide-react"
+import { apiFetch } from "@/lib/client-auth"
 
 const defaultStats = {
   conversations: 0,
@@ -17,7 +18,7 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch("/api/analytics")
+    apiFetch("/api/analytics")
       .then((r) => r.json())
       .then(setStats)
       .catch(() => setStats(defaultStats))

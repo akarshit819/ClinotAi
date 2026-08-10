@@ -5,6 +5,7 @@ import { Card, CardHeader, CardContent } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
 import { Badge } from "@/components/ui/Badge"
 import { Key, Loader2, Save, Check, X, Shield, Eye, EyeOff, Cpu, Zap } from "lucide-react"
+import { apiFetch } from "@/lib/client-auth"
 
 interface ApiConfig {
   provider: string
@@ -37,7 +38,7 @@ export default function ApiConfigPage() {
   const [showKey, setShowKey] = useState(false)
 
   useEffect(() => {
-    fetch("/api/api-config")
+    apiFetch("/api/api-config")
       .then((r) => r.json())
       .then((data) => { if (data) setConfig(data) })
       .finally(() => setLoading(false))
@@ -45,7 +46,7 @@ export default function ApiConfigPage() {
 
   const save = async () => {
     setSaving(true)
-    await fetch("/api/api-config", {
+    await apiFetch("/api/api-config", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(config),
@@ -57,7 +58,7 @@ export default function ApiConfigPage() {
     setTesting(true)
     setTestResult(null)
     try {
-      const res = await fetch("/api/api-config/test", {
+      const res = await apiFetch("/api/api-config/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config),

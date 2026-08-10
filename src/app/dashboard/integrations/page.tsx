@@ -12,6 +12,7 @@ import { Card, CardContent } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
 import { Badge } from "@/components/ui/Badge"
 import { cn } from "@/lib/utils"
+import { apiFetch } from "@/lib/client-auth"
 
 type IntegrationStatusValue = "disconnected" | "connecting" | "connected" | "error" | "expired"
 
@@ -158,7 +159,7 @@ export default function IntegrationsPage() {
     setLoading(true)
     setStatusError(null)
     try {
-      const res = await fetch("/api/integrations")
+      const res = await apiFetch("/api/integrations")
       if (res.ok) {
         const data = await res.json()
         setIntegrations(data.integrations || [])
@@ -218,7 +219,7 @@ export default function IntegrationsPage() {
     setConnecting("telegram")
     setActiveModal(null)
     try {
-      const res = await fetch("/api/integrations/telegram/auth", {
+      const res = await apiFetch("/api/integrations/telegram/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ botToken: telegramToken.trim() }),
@@ -243,7 +244,7 @@ export default function IntegrationsPage() {
     setConnecting("email")
     setActiveModal(null)
     try {
-      const res = await fetch("/api/integrations/email-smtp/auth", {
+      const res = await apiFetch("/api/integrations/email-smtp/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ host, port: parseInt(port), username, password, fromEmail, fromName }),
