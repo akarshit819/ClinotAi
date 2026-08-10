@@ -2,7 +2,7 @@ import crypto from "crypto"
 import fs from "fs"
 import path from "path"
 import { prisma } from "./lib/db"
-import { registerClinic } from "./lib/auth"
+import { registerClinic, checkPasswordStrength } from "./lib/auth"
 import { ALL_PERMISSIONS } from "./lib/permissions"
 
 /**
@@ -93,7 +93,18 @@ async function main(): Promise<void> {
     return
   }
 
-  const password = generateStrongPassword()
+  // Use a known password when provided via CLINOT_DEV_USER_PASSWORD (e.g. on
+  // Railway), otherwise generate a random one and print it.
+  let password = process.env.CLINOT_DEV_USER_PASSWORD ?? ""
+  if (password) {
+    const strength = checkPasswordStrength(password)
+    if (!strength.valid) {
+      console.error(`[dev-user] CLINOT_DEV_USER_PASSWORD is too weak: ${strength.message}`)
+      process.exit(1)
+    }
+  } else {
+    password = generateStrongPassword()
+  }
 
   // Use the real signup path (same function the /api/auth/register route calls).
   const result = await registerClinic({
