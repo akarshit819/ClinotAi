@@ -11,6 +11,7 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:seed": "tsx src/seed.ts",
+    "db:seed:dev": "tsx src/seed-dev-user.ts",
     "setup": "prisma generate && prisma db push && tsx src/seed.ts"
   },
   "dependencies": {
