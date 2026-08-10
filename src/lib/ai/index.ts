@@ -132,11 +132,11 @@ async function callPicoFallback(fullMessages: ChatMessage[]): Promise<string | n
   try {
     const text = await callBuildPicoApps({ url }, fullMessages)
     if (text) {
-      logger.info("AI response generated via BuildPicoApps fallback")
+      logger.info("AI response generated via BuildPicoApps")
       return text
     }
   } catch (picoError) {
-    logger.error("BuildPicoApps fallback failed", { error: picoError instanceof Error ? picoError.message : "Unknown error" })
+    logger.error("BuildPicoApps provider failed", { error: picoError instanceof Error ? picoError.message : "Unknown error" })
   }
   return null
 }
@@ -214,6 +214,12 @@ export async function generateAIResponse(
     const systemMessage: ChatMessage = { role: "system", content: systemPrompt }
     const fullMessages = [systemMessage, ...messages]
 
+    // BuildPicoApps is the primary AI provider when configured.
+    if (getPicoUrl()) {
+      const picoReply = await callPicoFallback(fullMessages)
+      if (picoReply) return picoReply
+    }
+
     if (providerResult.config && providerResult.source) {
       try {
         const response = await callProvider(providerResult.config, fullMessages)
@@ -236,11 +242,6 @@ export async function generateAIResponse(
       } catch (providerError: unknown) {
         const err = providerError as Error
         if (err?.message?.includes("Invalid API key") || err?.message?.includes("Rate limit exceeded")) {
-          // The configured provider is unusable (bad key, no credits, or rate
-          // limited). Try the BuildPicoApps LLM API as a stopgap before
-          // surfacing the failure.
-          const fallback = await callPicoFallback(fullMessages)
-          if (fallback) return fallback
           throw err
         }
         logger.warn("AI provider failed, falling back to keyword response", {
