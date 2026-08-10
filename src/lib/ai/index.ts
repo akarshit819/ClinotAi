@@ -180,7 +180,9 @@ export async function generateAIResponse(
       return buildEmergencyResponse(clinic?.emergencyPhone)
     }
 
-    const isMedicalQuery = guardrail.action === "medical_query" || /\b(diagnos|symptom|medication|prescribe|treatment|disease|cure)\b/i.test(userMessage)
+    const isMedicalQuery =
+      guardrail.action === "medical_query" ||
+      /\b(diagnos(e|is)|prescribe|prescription|medication|dosage|dose|should i (take|use|try|get)|what (medicine|medication|tablet|drug)|is this normal|second opinion)\b/i.test(userMessage)
 
     if (isMedicalQuery && !/\b(appointment|book|schedule)\b/i.test(userMessage)) {
       return buildMedicalQueryResponse() + `\n\nWould you like to schedule an appointment with our doctor instead?`
