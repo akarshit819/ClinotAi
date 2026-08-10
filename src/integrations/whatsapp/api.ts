@@ -1,4 +1,5 @@
 import { GRAPH_API } from "./types"
+import { logger } from "@/lib/logger"
 import type {
   WhatsAppConfig, WhatsAppSendMessageRequest, SendMessageResult,
   WhatsAppWebhookPayload, WhatsAppIncomingMessage, WhatsAppStatus,
@@ -295,9 +296,8 @@ export async function getBusinesses(
 export async function registerWebhook(
   config: WhatsAppConfig,
   webhookUrl: string,
-  verifyToken: string,
 ): Promise<boolean> {
-  const { ok } = await graphRequest(
+  const { ok, data } = await graphRequest(
     `/${config.wabaId}/subscribed_apps`,
     {
       method: "POST",
@@ -305,8 +305,19 @@ export async function registerWebhook(
       accessToken: config.accessToken,
     },
   )
-  if (!ok) return false
+  if (!ok) {
+    logger.error("WhatsApp webhook subscription failed", { error: data.error?.message })
+    return false
+  }
   return true
+}
+
+export async function unsubscribeWebhook(config: WhatsAppConfig): Promise<boolean> {
+  const { ok } = await graphRequest(
+    `/${config.wabaId}/subscribed_apps`,
+    { method: "DELETE", accessToken: config.accessToken },
+  )
+  return ok
 }
 
 export async function setWebhookUrl(
@@ -362,16 +373,10 @@ export async function testConnection(
 ): Promise<{ success: boolean; latencyMs: number; error?: string }> {
   const start = Date.now()
   const { ok, data } = await graphRequest(
-    `/${config.phoneNumberId}/messages`,
+    `/${config.phoneNumberId}`,
     {
-      method: "POST",
-      body: {
-        messaging_product: "whatsapp",
-        to: config.phoneNumberId.replace(/\D/g, "").slice(0, 15),
-        type: "text",
-        text: { body: "ping" },
-      },
       accessToken: config.accessToken,
+      params: { fields: "display_phone_number,verified_name" },
     },
   )
   const latencyMs = Date.now() - start

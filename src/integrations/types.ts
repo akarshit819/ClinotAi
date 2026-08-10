@@ -1,5 +1,4 @@
 import type { Platform } from "@/messaging/types"
-import { getEnv } from "@/lib/env"
 
 export type IntegrationStatusValue = "disconnected" | "connecting" | "connected" | "error" | "expired"
 
@@ -60,8 +59,8 @@ export interface SendMessageResult {
 }
 
 export const META_OAUTH_CONFIG: OAuthConfig = {
-  clientId: getEnv("META_APP_ID"),
-  clientSecret: getEnv("META_APP_SECRET"),
+  clientId: process.env.META_APP_ID || "",
+  clientSecret: process.env.META_APP_SECRET || "",
   scopes: [
     "whatsapp_business_messaging",
     "whatsapp_business_management",

@@ -1,26 +1,42 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getClinicId } from "@/lib/api"
-import { requireFeatureAccess } from "@/lib/billing"
-import { getAuthorizationUrl } from "@/integrations/oauth"
-import { getTelegramBotInfo, getTelegramWebhookInfo, setTelegramWebhook } from "@/integrations/telegram"
+import { getClinicId, AuthError } from "@/lib/api"
+import { requireIntegrationsConnectable } from "@/integrations/service"
+import { getAuthorizationUrl, getWhatsAppConfigDiagnostics } from "@/integrations/oauth"
+import { getTelegramBotInfo, setTelegramWebhook } from "@/integrations/telegram"
 import { checkEmailConfig } from "@/integrations/email"
 import { storeCredentials } from "@/integrations/token-store"
 import { getEnv } from "@/lib/env"
+import { logger } from "@/lib/logger"
 import type { EmailConfig } from "@/integrations/email"
 
 const TOKEN_PROVIDERS = ["telegram", "email-smtp"]
+
+function getSafeMessage(provider: string): string {
+  return provider === "whatsapp"
+    ? "WhatsApp connection could not be started. Please try again."
+    : "Connection could not be started. Please try again."
+}
 
 export async function GET(
   req: NextRequest,
   { params }: { params: { provider: string } },
 ) {
+  const provider = params.provider
+  const wantsJson = req.nextUrl.searchParams.get("json") === "1"
+
   try {
     const { clinicId } = await getClinicId(req)
-    await requireFeatureAccess(clinicId, "integrations")
-    const provider = params.provider
+    await requireIntegrationsConnectable(clinicId)
 
     const baseUrl = getEnv("NEXT_PUBLIC_APP_URL")
     const { url, cookie } = getAuthorizationUrl(provider, clinicId, baseUrl)
+
+    if (wantsJson) {
+      return NextResponse.json(
+        { url },
+        { status: 200, headers: { "Set-Cookie": cookie } },
+      )
+    }
 
     return new NextResponse(null, {
       status: 302,
@@ -30,10 +46,18 @@ export async function GET(
       },
     })
   } catch (error: any) {
-    if (error?.message === "Authentication required") {
+    if (error instanceof AuthError || error?.message === "Authentication required") {
       return NextResponse.json({ error: "Authentication required" }, { status: 401 })
     }
-    return NextResponse.json({ error: `Failed to start auth for ${params.provider}` }, { status: 500 })
+
+    const isWhatsApp = provider === "whatsapp"
+    logger.error("Failed to start integration auth", {
+      provider,
+      reason: error?.message,
+      ...(isWhatsApp ? { whatsapp: getWhatsAppConfigDiagnostics() } : {}),
+    })
+
+    return NextResponse.json({ error: getSafeMessage(provider) }, { status: 500 })
   }
 }
 
@@ -41,10 +65,10 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { provider: string } },
 ) {
+  const provider = params.provider
   try {
     const { clinicId } = await getClinicId(req)
-    await requireFeatureAccess(clinicId, "integrations")
-    const provider = params.provider
+    await requireIntegrationsConnectable(clinicId)
 
     if (!TOKEN_PROVIDERS.includes(provider)) {
       return NextResponse.json({ error: "Use GET for OAuth providers" }, { status: 400 })
@@ -137,9 +161,10 @@ export async function POST(
 
     return NextResponse.json({ error: "Unknown provider" }, { status: 400 })
   } catch (error: any) {
-    if (error?.message === "Authentication required") {
+    if (error instanceof AuthError || error?.message === "Authentication required") {
       return NextResponse.json({ error: "Authentication required" }, { status: 401 })
     }
-    return NextResponse.json({ error: error.message || "Auth failed" }, { status: 500 })
+    logger.error("Failed to connect integration", { provider, reason: error?.message })
+    return NextResponse.json({ error: getSafeMessage(provider) }, { status: 500 })
   }
 }

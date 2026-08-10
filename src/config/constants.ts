@@ -1,5 +1,11 @@
 export const CLINIC_ID = "demo-clinic"
 
+// Integrations currently available to users.
+// WhatsApp is the only active integration today; other platforms are kept
+// in the codebase (connectors, routes, DB models) and can be re-enabled by
+// adding their platform key back to this list.
+export const ACTIVE_INTEGRATION_PLATFORMS = ["whatsapp"] as const
+
 export const SITE = {
   name: "Clinot",
   domain: "clinot.ai",

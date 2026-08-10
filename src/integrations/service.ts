@@ -1,12 +1,35 @@
 import { prisma } from "@/lib/db"
 import { storeCredentials, getCredentials, deleteCredentials, updateCredentials } from "./token-store"
 import { getEnv } from "@/lib/env"
+import { getPlanBySlug } from "@/lib/billing/plans"
+import { ACTIVE_INTEGRATION_PLATFORMS } from "@/config/constants"
 import type { IntegrationStatus, IntegrationStatusValue, StoredCredentials } from "./types"
 import type { Platform } from "@/messaging/types"
 
-const CONNECTABLE_PLATFORMS: Platform[] = [
-  "whatsapp", "instagram", "facebook", "telegram", "email",
-]
+// Only platforms listed here are surfaced to users. WhatsApp is the only
+// active integration today; re-enable others by adding them back.
+const CONNECTABLE_PLATFORMS: Platform[] = [...ACTIVE_INTEGRATION_PLATFORMS] as unknown as Platform[]
+
+/**
+ * Allows connecting integrations unless the clinic explicitly has a plan that
+ * disables both the `integrations` and `whatsapp` features. Clinics without a
+ * subscription (e.g. freshly onboarded or demo clinics) are allowed so the
+ * core WhatsApp flow is never blocked by an unrelated billing state.
+ */
+export async function requireIntegrationsConnectable(clinicId: string): Promise<void> {
+  const sub = await prisma.subscription.findFirst({
+    where: { clinicId },
+    orderBy: { createdAt: "desc" },
+  })
+  if (!sub) return
+
+  const plan = await getPlanBySlug(sub.plan)
+  if (!plan) return
+
+  if (plan.features.integrations || plan.features.whatsapp) return
+
+  throw new Error(`Integrations are not enabled on your current plan`)
+}
 
 export async function getAllIntegrationStatuses(clinicId: string): Promise<IntegrationStatus[]> {
   const integrations = await prisma.integration.findMany({
