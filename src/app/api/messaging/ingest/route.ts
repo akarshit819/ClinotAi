@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { ingestMessage } from "@/messaging/engine"
+import { ingestMessage } from "@/messaging"
 import { getClinicId } from "@/lib/api"
 import { requireFeatureAccess } from "@/lib/billing"
 import type { IncomingMessage, Platform } from "@/messaging/types"

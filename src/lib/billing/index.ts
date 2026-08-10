@@ -47,6 +47,7 @@ export {
 export {
   getClinicSubscriptionStatus,
   checkFeatureAccess,
+  canProcessMessaging,
   checkUsageLimit,
   requireActiveSubscription,
   requireFeatureAccess,

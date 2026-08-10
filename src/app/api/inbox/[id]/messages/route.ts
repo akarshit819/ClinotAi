@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getClinicId } from "@/lib/api"
 import { requireFeatureAccess } from "@/lib/billing"
-import { sendReply } from "@/messaging/engine"
+import { sendReply } from "@/messaging"
 import { prisma } from "@/lib/db"
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {

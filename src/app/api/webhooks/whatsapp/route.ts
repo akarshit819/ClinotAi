@@ -2,8 +2,8 @@ import crypto from "crypto"
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/db"
 import { parseWebhookPayload, extractMessages, verifyWebhook } from "@/integrations/whatsapp/api"
-import { handlePlatformWebhook } from "@/messaging/engine"
-import { checkFeatureAccess } from "@/lib/billing"
+import { handlePlatformWebhook } from "@/messaging"
+import { canProcessMessaging } from "@/lib/billing"
 import { logger } from "@/lib/logger"
 
 function requireEnv(name: string): string {
@@ -123,6 +123,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!clinicId) {
+      logger.warn("WhatsApp webhook received for unknown phone number; dropping", { phoneNumberId })
       return NextResponse.json({ received: true })
     }
 
@@ -149,8 +150,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ received: true })
     }
 
-    const featureCheck = await checkFeatureAccess(clinicId, "messaging")
+    const featureCheck = await canProcessMessaging(clinicId)
     if (!featureCheck.allowed) {
+      logger.warn("WhatsApp webhook dropped by messaging gate", { clinicId, phoneNumberId, reason: featureCheck.reason })
       return NextResponse.json({ received: true })
     }
 
@@ -171,10 +173,12 @@ export async function POST(req: NextRequest) {
     try {
       const result = await handlePlatformWebhook("whatsapp", body, Object.fromEntries(req.headers))
       return NextResponse.json({ received: true, processed: result ? 1 : 0 })
-    } catch {
+    } catch (error: unknown) {
+      logger.error("WhatsApp webhook processing failed", { error: error instanceof Error ? error.message : "Unknown error" })
       return NextResponse.json({ received: true })
     }
-  } catch {
+  } catch (error: unknown) {
+    logger.error("WhatsApp webhook route error", { error: error instanceof Error ? error.message : "Unknown error" })
     return NextResponse.json({ received: true })
   }
 }

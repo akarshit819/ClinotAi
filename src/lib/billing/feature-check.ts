@@ -76,6 +76,41 @@ export async function checkFeatureAccess(
   return { allowed: true }
 }
 
+/**
+ * Gate for inbound messaging processing (e.g. the WhatsApp webhook).
+ *
+ * Mirrors the connect flow's philosophy (see `requireIntegrationsConnectable`):
+ * clinics with no subscription at all (freshly onboarded or demo clinics) are
+ * allowed so the core messaging flow is never silently dropped because of an
+ * unrelated billing state. Clinics that DO have a subscription are still gated
+ * by their plan's `messaging` feature.
+ */
+export async function canProcessMessaging(clinicId: string): Promise<FeatureCheckResult> {
+  const sub = await prisma.subscription.findFirst({
+    where: { clinicId },
+    orderBy: { createdAt: "desc" },
+  })
+  if (!sub) {
+    return { allowed: true }
+  }
+
+  const { isActive, isPastDue } = getSubscriptionStatus(sub)
+  if (!isActive && !isPastDue) {
+    return { allowed: false, reason: "Subscription is not active" }
+  }
+
+  const plan = await getPlanBySlug(sub.plan)
+  if (!plan) {
+    return { allowed: false, reason: "Plan not found" }
+  }
+
+  if (!plan.features.messaging) {
+    return { allowed: false, reason: `Messaging is not available on ${plan.name} plan` }
+  }
+
+  return { allowed: true }
+}
+
 export async function checkUsageLimit(
   clinicId: string,
   metric: keyof PlanLimits,

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db"
-import { checkFeatureAccess } from "@/lib/billing"
+import { canProcessMessaging } from "@/lib/billing"
+import { logger } from "@/lib/logger"
 import { processIncomingMessage } from "./pipeline"
 import { getConnector } from "./connectors/registry"
 import { getCredentials as getStoredCredentials } from "@/integrations/token-store"
@@ -30,8 +31,9 @@ export async function handlePlatformWebhook(
   })
   if (!integration) throw new Error(`Integration not configured for ${platform}`)
 
-  const featureCheck = await checkFeatureAccess(integration.clinicId, "messaging")
+  const featureCheck = await canProcessMessaging(integration.clinicId)
   if (!featureCheck.allowed) {
+    logger.warn("Messaging gate blocked platform webhook", { clinicId: integration.clinicId, reason: featureCheck.reason })
     throw new Error(`Messaging not available: ${featureCheck.reason}`)
   }
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { handlePlatformWebhook } from "@/messaging/engine"
+import { handlePlatformWebhook } from "@/messaging"
 import type { Platform } from "@/messaging/types"
 
 export async function POST(req: NextRequest) {

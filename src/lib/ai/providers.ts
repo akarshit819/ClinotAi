@@ -151,3 +151,26 @@ export async function callOpenRouter(config: AIProviderConfig, messages: ChatMes
   const data = await res.json()
   return data.choices?.[0]?.message?.content || ""
 }
+
+export async function callBuildPicoApps(config: { url: string }, messages: ChatMessage[]): Promise<string> {
+  const system = messages.find((m) => m.role === "system")?.content || ""
+  const chat = messages.filter((m) => m.role !== "system")
+  const lines: string[] = []
+  if (system) {
+    lines.push(`You are the AI receptionist for a clinic. Follow these instructions:\n${system}`)
+  }
+  for (const m of chat) {
+    lines.push(`${m.role === "assistant" ? "Assistant" : "User"}: ${m.content}`)
+  }
+  const res = await providerFetch(config.url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: lines.join("\n\n") }),
+  })
+  if (!res.ok) throw new Error("BuildPicoApps error: " + res.status)
+  const data = await res.json()
+  if (data?.status === "success" && typeof data?.text === "string" && data.text.trim()) {
+    return data.text.trim()
+  }
+  throw new Error("BuildPicoApps error: " + JSON.stringify(data))
+}

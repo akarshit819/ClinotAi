@@ -22,13 +22,18 @@ export async function runAiReceptionist(
 
   const aiConfidence = aiResponse ? 0.85 : 0
 
-  const requiresClinic = intentConfidence < 0.5 || aiConfidence < 0.6
+  // Send the AI reply whenever it produced a confident response. A low
+  // keyword-match confidence on a short greeting ("Hi", "Hello") must not
+  // suppress the reply - the receptionist should always acknowledge the
+  // patient. Only route to the clinic when the AI has no confident response,
+  // or when the intent explicitly needs human handling.
+  const requiresClinic = aiConfidence < 0.6 || intent === "appointment" || intent === "lead"
 
   return {
     response: aiResponse || "I'll connect you with our team to help with your question.",
     intent,
     confidence: Math.max(intentConfidence, aiConfidence),
-    requiresClinic: requiresClinic || intent === "appointment" || intent === "lead",
+    requiresClinic,
   }
 }
 
