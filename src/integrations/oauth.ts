@@ -61,6 +61,7 @@ function getMetaAuthUrl(
   scopes: string[],
   state: string,
   redirectUri: string,
+  configId?: string,
 ): string {
   const clientId = getEnv("META_APP_ID")
   const params = new URLSearchParams({
@@ -70,6 +71,16 @@ function getMetaAuthUrl(
     response_type: "code",
     scope: scopes.join(","),
   })
+
+  // WhatsApp uses Meta's config-based Embedded Signup when a config ID is
+  // configured. That flow redirects back to `redirect_uri?code=...&state=...`
+  // exactly like the standard dialog, but the plain dialog does not return a
+  // usable code for Embedded Signup apps.
+  if (configId) {
+    params.set("config_id", configId)
+    return `https://www.facebook.com/oauth/embedded_signup/select_business?${params.toString()}`
+  }
+
   return `https://www.facebook.com/v20.0/dialog/oauth?${params.toString()}`
 }
 
@@ -86,6 +97,7 @@ export function getWhatsAppConfigDiagnostics(): Record<string, string> {
     appUrl: getBool(process.env.NEXT_PUBLIC_APP_URL),
     appUrlValueSafe: process.env.NEXT_PUBLIC_APP_URL ? "configured" : "missing",
     encryptionKey: getBool(process.env.ENCRYPTION_KEY),
+    waConfigId: getBool(process.env.META_WA_CONFIG_ID),
     graphApi: process.env.META_GRAPH_API || "https://graph.facebook.com/v20.0",
   }
 }
@@ -137,15 +149,18 @@ export function getAuthorizationUrl(
 
   switch (provider) {
     case "whatsapp": {
+      const configId = process.env.META_WA_CONFIG_ID?.trim() || undefined
       logger.info("Starting WhatsApp OAuth", {
         clinicId,
         redirectUri,
         config: getWhatsAppConfigDiagnostics(),
+        embeddedSignup: configId ? "configured" : "not configured",
       })
       const url = getMetaAuthUrl(
         ["whatsapp_business_management", "whatsapp_business_messaging", "business_management"],
         state,
         redirectUri,
+        configId,
       )
       return { url, cookie }
     }

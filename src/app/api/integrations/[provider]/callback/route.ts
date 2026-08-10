@@ -16,14 +16,29 @@ export async function GET(
 
   const redirectHome = (error: string, providerName: string) =>
     NextResponse.redirect(
-      new URL(`/dashboard/integrations?error=${encodeURIComponent(error)}&provider=${providerName}`, baseUrl),
+      new URL(
+        `/dashboard/integrations?error=${encodeURIComponent(error)}&provider=${encodeURIComponent(providerName)}`,
+        baseUrl,
+      ),
     )
 
   try {
-    const { searchParams } = new URL(req.url)
+    // `req.nextUrl` is the canonical query source for App Router handlers and
+    // stays correct even when `req.url` is rewritten by a proxy/CDN.
+    const searchParams = req.nextUrl.searchParams
     const code = searchParams.get("code")
     const state = searchParams.get("state")
     const error = searchParams.get("error")
+
+    // Diagnostics: record exactly what arrived at the callback so the
+    // Meta->app redirect can be verified. Never logs the code value.
+    logger.info("Integration OAuth callback received", {
+      provider,
+      pathname: req.nextUrl.pathname,
+      hasCode: !!code,
+      hasState: !!state,
+      hasError: !!error,
+    })
 
     if (error) {
       const errorMsg = error.replace(/_/g, " ").trim()
@@ -32,6 +47,12 @@ export async function GET(
     }
 
     if (!code || !state) {
+      logger.warn("Integration OAuth callback missing code/state", {
+        provider,
+        pathname: req.nextUrl.pathname,
+        hasCode: !!code,
+        hasState: !!state,
+      })
       return redirectHome("Missing authorization code", provider)
     }
 
@@ -56,7 +77,7 @@ export async function GET(
     logger.info("Integration OAuth callback succeeded", { provider, clinicId: verified.clinicId })
 
     return NextResponse.redirect(
-      new URL(`/dashboard/integrations?success=${provider} connected&provider=${provider}`, baseUrl),
+      new URL(`/dashboard/integrations?success=${encodeURIComponent(`${provider} connected`)}&provider=${encodeURIComponent(provider)}`, baseUrl),
     )
   } catch (err: any) {
     logger.error("Integration OAuth callback failed", { provider, reason: err?.message?.slice(0, 300) })
