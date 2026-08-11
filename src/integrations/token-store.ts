@@ -48,6 +48,7 @@ export async function storeCredentials(
     update: {
       credentials: encrypted,
       status: "connected",
+      enabled: true,
       lastSyncAt: new Date(),
     },
     create: {
