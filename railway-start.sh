@@ -1,11 +1,14 @@
 #!/bin/sh
 set -e
 
-npx prisma db push --skip-generate
+# Apply database migrations. Production schema is managed by Prisma migrations,
+# never `db push` (which would silently drift from the migration history).
+npx prisma generate
+npx prisma migrate deploy
 
-# Provision core data (admin user, demo clinic, plans, FAQs) on every boot.
-# The database is ephemeral on Railway (no volume), so this keeps the app usable.
-npx tsx src/seed.ts || echo "[railway] Main seed failed; continuing boot."
+# Provision non-secret system data (permissions, plans, clinic template).
+# Idempotent, contains no credentials and never creates a demo admin user.
+npx tsx src/seed-system.ts || echo "[railway] System seed failed; continuing boot."
 
 # Opt-in: create/verify the clearly-marked dev/test user on every boot.
 # Only runs when CLINOT_DEV_SEED=true is set in the Railway environment.
@@ -14,8 +17,9 @@ if [ "$CLINOT_DEV_SEED" = "true" ]; then
   npx tsx src/seed-dev-user.ts || echo "[railway] Dev seed skipped or failed; continuing boot."
 fi
 
-# Connect the WhatsApp business account from env vars (idempotent). Required for
-# inbound webhooks to resolve the clinic and for outbound replies to work.
-npx tsx src/seed-whatsapp.ts || echo "[railway] WhatsApp seed skipped or failed; continuing boot."
+# Connect the WhatsApp business account from env vars (idempotent). Only runs
+# when WHATSAPP_ACCESS_TOKEN/PHONE_NUMBER_ID/WABA_ID are set, and it never
+# creates users or demo data. Required for inbound webhooks + outbound replies.
+npx tsx src/seed-whatsapp.ts || echo "[railway] WhatsApp provisioning skipped or failed; continuing boot."
 
 npm run start

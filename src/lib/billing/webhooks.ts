@@ -59,36 +59,26 @@ async function handleCheckoutCompleted(event: Record<string, any>): Promise<void
   const customerId = session.customer as string
   const subscriptionId = session.subscription as string
 
-  const existingSub = await prisma.subscription.findFirst({
+  await prisma.subscription.upsert({
     where: { clinicId },
-    orderBy: { createdAt: "desc" },
+    update: {
+      stripeSubscriptionId: subscriptionId,
+      stripeCustomerId: customerId,
+      status: "active",
+      plan,
+      currentPeriodStart: session.currentPeriodStart ? new Date(session.currentPeriodStart * 1000) : undefined,
+      currentPeriodEnd: session.currentPeriodEnd ? new Date(session.currentPeriodEnd * 1000) : undefined,
+    },
+    create: {
+      clinicId,
+      stripeSubscriptionId: subscriptionId,
+      stripeCustomerId: customerId,
+      status: "active",
+      plan,
+      currentPeriodStart: session.currentPeriodStart ? new Date(session.currentPeriodStart * 1000) : undefined,
+      currentPeriodEnd: session.currentPeriodEnd ? new Date(session.currentPeriodEnd * 1000) : undefined,
+    },
   })
-
-  if (existingSub) {
-    await prisma.subscription.update({
-      where: { id: existingSub.id },
-      data: {
-        stripeSubscriptionId: subscriptionId,
-        stripeCustomerId: customerId,
-        status: "active",
-        plan,
-        currentPeriodStart: session.currentPeriodStart ? new Date(session.currentPeriodStart * 1000) : undefined,
-        currentPeriodEnd: session.currentPeriodEnd ? new Date(session.currentPeriodEnd * 1000) : undefined,
-      },
-    })
-  } else {
-    await prisma.subscription.create({
-      data: {
-        clinicId,
-        stripeSubscriptionId: subscriptionId,
-        stripeCustomerId: customerId,
-        status: "active",
-        plan,
-        currentPeriodStart: session.currentPeriodStart ? new Date(session.currentPeriodStart * 1000) : undefined,
-        currentPeriodEnd: session.currentPeriodEnd ? new Date(session.currentPeriodEnd * 1000) : undefined,
-      },
-    })
-  }
 
   await prisma.clinic.update({
     where: { id: clinicId },
@@ -118,41 +108,34 @@ async function handleSubscriptionCreated(event: Record<string, any>): Promise<vo
   const priceId = sub.items?.data?.[0]?.price?.id || sub.plan?.id || ""
   const plan = getPlanFromPriceId(priceId)
 
-  const existing = await prisma.subscription.findFirst({ where: { clinicId }, orderBy: { createdAt: "desc" } })
-
-  if (existing) {
-    await prisma.subscription.update({
-      where: { id: existing.id },
-      data: {
-        stripeSubscriptionId: sub.id,
-        stripeCustomerId: sub.customer,
-        stripePriceId: priceId,
-        status: mapStatus(sub.status),
-        plan,
-        currentPeriodStart: sub.currentPeriodStart ? new Date(sub.currentPeriodStart * 1000) : undefined,
-        currentPeriodEnd: sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd * 1000) : undefined,
-        cancelAtPeriodEnd: sub.cancelAtPeriodEnd ?? false,
-        trialStart: sub.trialStart ? new Date(sub.trialStart * 1000) : undefined,
-        trialEnd: sub.trialEnd ? new Date(sub.trialEnd * 1000) : undefined,
-      },
-    })
-  } else {
-    await prisma.subscription.create({
-      data: {
-        clinicId,
-        stripeSubscriptionId: sub.id,
-        stripeCustomerId: sub.customer,
-        stripePriceId: priceId,
-        status: mapStatus(sub.status),
-        plan,
-        currentPeriodStart: sub.currentPeriodStart ? new Date(sub.currentPeriodStart * 1000) : undefined,
-        currentPeriodEnd: sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd * 1000) : undefined,
-        cancelAtPeriodEnd: sub.cancelAtPeriodEnd ?? false,
-        trialStart: sub.trialStart ? new Date(sub.trialStart * 1000) : undefined,
-        trialEnd: sub.trialEnd ? new Date(sub.trialEnd * 1000) : undefined,
-      },
-    })
-  }
+  await prisma.subscription.upsert({
+    where: { clinicId },
+    update: {
+      stripeSubscriptionId: sub.id,
+      stripeCustomerId: sub.customer,
+      stripePriceId: priceId,
+      status: mapStatus(sub.status),
+      plan,
+      currentPeriodStart: sub.currentPeriodStart ? new Date(sub.currentPeriodStart * 1000) : undefined,
+      currentPeriodEnd: sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd * 1000) : undefined,
+      cancelAtPeriodEnd: sub.cancelAtPeriodEnd ?? false,
+      trialStart: sub.trialStart ? new Date(sub.trialStart * 1000) : undefined,
+      trialEnd: sub.trialEnd ? new Date(sub.trialEnd * 1000) : undefined,
+    },
+    create: {
+      clinicId,
+      stripeSubscriptionId: sub.id,
+      stripeCustomerId: sub.customer,
+      stripePriceId: priceId,
+      status: mapStatus(sub.status),
+      plan,
+      currentPeriodStart: sub.currentPeriodStart ? new Date(sub.currentPeriodStart * 1000) : undefined,
+      currentPeriodEnd: sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd * 1000) : undefined,
+      cancelAtPeriodEnd: sub.cancelAtPeriodEnd ?? false,
+      trialStart: sub.trialStart ? new Date(sub.trialStart * 1000) : undefined,
+      trialEnd: sub.trialEnd ? new Date(sub.trialEnd * 1000) : undefined,
+    },
+  })
 }
 
 async function handleSubscriptionUpdated(event: Record<string, any>): Promise<void> {

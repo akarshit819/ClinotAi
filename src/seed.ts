@@ -4,6 +4,16 @@ import { prisma } from "./lib/db"
 import { ALL_PERMISSIONS, DEFAULT_ROLE_PERMISSIONS } from "./lib/permissions"
 
 async function main() {
+  const isProduction = process.env.NODE_ENV === "production"
+  const explicitlyAllowed = process.env.CLINOT_SEED_DEMO === "true"
+  if (isProduction && !explicitlyAllowed) {
+    console.error(
+      "[seed] Refusing to create demo data (including the admin@clinot.ai demo account) in production. " +
+      "This seed is for local development only. If you are absolutely certain, set CLINOT_SEED_DEMO=true.",
+    )
+    process.exit(1)
+  }
+
   console.log("Seeding database...")
 
   // Create system permissions

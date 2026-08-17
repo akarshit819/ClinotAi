@@ -7,11 +7,18 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "tsx src/seed.ts",
+    "db:seed:system": "tsx src/seed-system.ts",
     "db:seed:dev": "tsx src/seed-dev-user.ts",
+    "db:seed:whatsapp": "tsx src/seed-whatsapp.ts",
+    "db:import:sqlite": "prisma generate --schema prisma/schema.sqlite.prisma && tsx scripts/import-sqlite-to-postgres.ts",
     "setup": "prisma generate && prisma db push && tsx src/seed.ts"
   },
   "dependencies": {

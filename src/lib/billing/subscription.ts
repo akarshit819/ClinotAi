@@ -45,21 +45,11 @@ export async function createCheckoutSession(clinicId: string, planSlug: string) 
     metadata: { clinicId, plan: planSlug },
   })
 
-  const existingSub = await prisma.subscription.findFirst({
+  await prisma.subscription.upsert({
     where: { clinicId },
-    orderBy: { createdAt: "desc" },
+    update: { plan: planSlug, status: "incomplete", stripeCustomerId: customerId },
+    create: { clinicId, stripeCustomerId: customerId, plan: planSlug, status: "incomplete" },
   })
-
-  if (existingSub) {
-    await prisma.subscription.update({
-      where: { id: existingSub.id },
-      data: { plan: planSlug, status: "incomplete", stripeCustomerId: customerId },
-    })
-  } else {
-    await prisma.subscription.create({
-      data: { clinicId, stripeCustomerId: customerId, plan: planSlug, status: "incomplete" },
-    })
-  }
 
   return session
 }

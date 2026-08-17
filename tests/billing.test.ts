@@ -13,6 +13,7 @@ vi.mock("@/lib/db", () => ({
       create: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
+      upsert: vi.fn(),
     },
     invoice: {
       findUnique: vi.fn(),
@@ -330,8 +331,7 @@ describe("Webhook Processing", () => {
   it("handles checkout.session.completed", async () => {
     ;(prisma.stripeEvent.findUnique as any).mockResolvedValue(null)
     ;(prisma.stripeEvent.create as any).mockResolvedValue({})
-    ;(prisma.subscription.findFirst as any).mockResolvedValue(null)
-    ;(prisma.subscription.create as any).mockResolvedValue({ id: "sub_new" })
+    ;(prisma.subscription.upsert as any).mockResolvedValue({ id: "sub_new" })
     ;(prisma.clinic.update as any).mockResolvedValue({})
     ;(prisma.user.findFirst as any).mockResolvedValue(null)
 
@@ -353,7 +353,13 @@ describe("Webhook Processing", () => {
     const result = await processStripeWebhook(event)
     expect(result.handled).toBe(true)
     expect(result.skipped).toBe(false)
-    expect(prisma.subscription.create).toHaveBeenCalled()
+    expect(prisma.subscription.upsert).toHaveBeenCalled()
+    expect(prisma.subscription.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { clinicId: "clinic_1" },
+        create: expect.objectContaining({ status: "active", plan: "starter", clinicId: "clinic_1" }),
+      }),
+    )
   })
 
   it("handles customer.subscription.updated with plan change", async () => {
