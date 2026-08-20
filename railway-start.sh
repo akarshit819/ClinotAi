@@ -4,6 +4,12 @@ set -e
 # Apply database migrations. Production schema is managed by Prisma migrations,
 # never `db push` (which would silently drift from the migration history).
 npx prisma generate
+
+# Recover from a previously failed migration attempt so the corrected
+# migration can be applied on a later boot. No-op if the migration is not in a
+# failed state (and harmless if the migration already applied successfully).
+npx prisma migrate resolve --rolled-back 20260816000000_init || true
+
 npx prisma migrate deploy
 
 # Provision non-secret system data (permissions, plans, clinic template).

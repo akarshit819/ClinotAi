@@ -1,4 +1,4 @@
-﻿-- CreateTable
+-- CreateTable
 CREATE TABLE "ClinicTemplate" (
     "id" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
