@@ -317,6 +317,36 @@ model WhatsAppWebhookEvent {
   @@index([createdAt])
 }
 
+model MessengerWebhookEvent {
+  id        String   @id @default(cuid())
+  eventId   String
+  clinicId  String
+  pageId    String
+  type      String
+  status    String   @default("processed")
+  createdAt DateTime @default(now())
+
+  @@unique([eventId])
+  @@index([clinicId])
+  @@index([pageId])
+  @@index([createdAt])
+}
+
+model InstagramWebhookEvent {
+  id            String   @id @default(cuid())
+  eventId       String
+  clinicId      String
+  instagramId   String?
+  type          String
+  status        String   @default("processed")
+  createdAt     DateTime @default(now())
+
+  @@unique([eventId])
+  @@index([clinicId])
+  @@index([instagramId])
+  @@index([createdAt])
+}
+
 model Service {
   id        String   @id @default(cuid())
   name      String

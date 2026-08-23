@@ -22,12 +22,17 @@ async function getClinicEmail(clinicId: string): Promise<string | null> {
 }
 
 async function markEventProcessed(stripeEventId: string, eventType: string): Promise<boolean> {
-  const existing = await prisma.stripeEvent.findUnique({ where: { stripeEventId } })
-  if (existing) return false
-  await prisma.stripeEvent.create({
-    data: { stripeEventId, type: eventType, status: "processed" },
-  })
-  return true
+  try {
+    await prisma.stripeEvent.create({
+      data: { stripeEventId, type: eventType, status: "processed" },
+    })
+    return true
+  } catch (error: any) {
+    if (error?.code === "P2002") {
+      return false
+    }
+    throw error
+  }
 }
 
 async function getClinicIdFromEvent(event: Record<string, any>): Promise<string | null> {
@@ -60,9 +65,9 @@ async function handleCheckoutCompleted(event: Record<string, any>): Promise<void
   const subscriptionId = session.subscription as string
 
   await prisma.subscription.upsert({
-    where: { clinicId },
+    where: { stripeSubscriptionId: subscriptionId },
     update: {
-      stripeSubscriptionId: subscriptionId,
+      clinicId,
       stripeCustomerId: customerId,
       status: "active",
       plan,
@@ -109,13 +114,13 @@ async function handleSubscriptionCreated(event: Record<string, any>): Promise<vo
   const plan = getPlanFromPriceId(priceId)
 
   await prisma.subscription.upsert({
-    where: { clinicId },
+    where: { stripeSubscriptionId: sub.id },
     update: {
-      stripeSubscriptionId: sub.id,
+      clinicId,
       stripeCustomerId: sub.customer,
       stripePriceId: priceId,
       status: mapStatus(sub.status),
-      plan,
+      plan: getPlanFromPriceId(priceId),
       currentPeriodStart: sub.currentPeriodStart ? new Date(sub.currentPeriodStart * 1000) : undefined,
       currentPeriodEnd: sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd * 1000) : undefined,
       cancelAtPeriodEnd: sub.cancelAtPeriodEnd ?? false,
@@ -128,7 +133,7 @@ async function handleSubscriptionCreated(event: Record<string, any>): Promise<vo
       stripeCustomerId: sub.customer,
       stripePriceId: priceId,
       status: mapStatus(sub.status),
-      plan,
+      plan: getPlanFromPriceId(priceId),
       currentPeriodStart: sub.currentPeriodStart ? new Date(sub.currentPeriodStart * 1000) : undefined,
       currentPeriodEnd: sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd * 1000) : undefined,
       cancelAtPeriodEnd: sub.cancelAtPeriodEnd ?? false,

@@ -13,6 +13,7 @@ export interface SubscriptionStatus {
   isPastDue: boolean
   isCancelled: boolean
   isExpired: boolean
+  isTrialing: boolean
   plan: string
   status: string
 }
@@ -24,11 +25,14 @@ export function getSubscriptionStatus(sub: {
 }): SubscriptionStatus {
   const now = new Date()
   const expired = !!(sub.currentPeriodEnd && sub.currentPeriodEnd < now)
+  const isTrialing = sub.status === "trialing"
+  const isActiveStatus = sub.status === "active" || isTrialing
   return {
-    isActive: sub.status === "active" && !expired,
+    isActive: isActiveStatus && !expired,
     isPastDue: sub.status === "past_due",
     isCancelled: sub.status === "cancelled" || (sub.cancelAtPeriodEnd && expired),
     isExpired: expired || sub.status === "expired",
+    isTrialing,
     plan: "",
     status: sub.status,
   }
@@ -40,7 +44,7 @@ export async function getClinicSubscriptionStatus(clinicId: string): Promise<Sub
     orderBy: { createdAt: "desc" },
   })
   if (!sub) {
-    return { isActive: false, isPastDue: false, isCancelled: false, isExpired: true, plan: "none", status: "none" }
+    return { isActive: false, isPastDue: false, isCancelled: false, isExpired: true, isTrialing: false, plan: "none", status: "none" }
   }
   const status = getSubscriptionStatus(sub)
   return { ...status, plan: sub.plan }

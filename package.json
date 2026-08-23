@@ -19,6 +19,7 @@
     "db:seed:dev": "tsx src/seed-dev-user.ts",
     "db:seed:whatsapp": "tsx src/seed-whatsapp.ts",
     "db:import:sqlite": "prisma generate --schema prisma/schema.sqlite.prisma && tsx scripts/import-sqlite-to-postgres.ts",
+    "bootstrap:admin": "tsx src/bootstrap-admin.ts",
     "setup": "prisma generate && prisma db push && tsx src/seed.ts"
   },
   "dependencies": {

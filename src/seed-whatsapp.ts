@@ -24,7 +24,7 @@ async function main() {
   const phone = validation.phoneNumber
   const waba = validation.waba
 
-  let clinic = await prisma.clinic.findFirst({ where: { users: { some: { email: "admin@clinot.ai" } } } })
+  let clinic = await prisma.clinic.findFirst({ where: { users: { some: { role: { name: "owner" } } } } })
   if (!clinic) clinic = await prisma.clinic.findFirst()
   if (!clinic) {
     console.log("[seed-whatsapp] No clinic found - skipping")

@@ -1,9 +1,13 @@
 import { registerConnector } from "./connectors/registry"
 import { WebsiteConnector } from "./connectors/website/connector"
 import { WhatsAppConnector } from "./connectors/whatsapp/connector"
+import { MessengerConnector } from "./connectors/messenger/connector"
+import { InstagramConnector } from "./connectors/instagram/connector"
 
 registerConnector(new WebsiteConnector())
 registerConnector(new WhatsAppConnector())
+registerConnector(new MessengerConnector())
+registerConnector(new InstagramConnector())
 
 export { processIncomingMessage } from "./pipeline"
 export { getConnector, getAllConnectors, registerConnector } from "./connectors/registry"

@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 
+vi.mock("@/lib/billing/feature-check", async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, any>
+  return {
+    ...actual,
+    canProcessMessaging: vi.fn().mockResolvedValue({ allowed: true }),
+  }
+})
+
 vi.mock("@/lib/db", () => ({
   prisma: {
     plan: {
@@ -321,7 +329,9 @@ describe("Webhook Processing", () => {
   })
 
   it("skips duplicate webhook events", async () => {
-    ;(prisma.stripeEvent.findUnique as any).mockResolvedValue({ id: "evt_1", stripeEventId: "evt_dup" })
+    const error = new Error("Unique constraint failed") as Error & { code: string }
+    error.code = "P2002"
+    ;(prisma.stripeEvent.create as any).mockRejectedValue(error)
 
     const result = await processStripeWebhook({ id: "evt_dup", type: "invoice.paid" })
     expect(result.skipped).toBe(true)
@@ -356,7 +366,7 @@ describe("Webhook Processing", () => {
     expect(prisma.subscription.upsert).toHaveBeenCalled()
     expect(prisma.subscription.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { clinicId: "clinic_1" },
+        where: { stripeSubscriptionId: "sub_stripe_1" },
         create: expect.objectContaining({ status: "active", plan: "starter", clinicId: "clinic_1" }),
       }),
     )

@@ -1,8 +1,7 @@
-const TOKEN_EXPIRY = 3600_000
+import crypto from "crypto"
+import { getCsrfSecret } from "@/lib/env"
 
-function getCsrfSecret(): string {
-  return process.env.CSRF_SECRET || "csrf-secret-not-configured"
-}
+const TOKEN_EXPIRY = 3600_000
 
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("")

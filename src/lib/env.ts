@@ -56,7 +56,21 @@ export function getEncryptionKey(): string {
 }
 
 export function getCsrfSecret(): string {
-  return process.env.CSRF_SECRET || getJwtSecret()
+  const secret = process.env.CSRF_SECRET
+  if (!secret) {
+    if (isProduction()) {
+      throw new Error("CSRF_SECRET is required in production. Generate a random 32+ character string.")
+    }
+    logger.warn("CSRF_SECRET not set — using JWT_SECRET as fallback. Set CSRF_SECRET env var for production.")
+    return getJwtSecret()
+  }
+  if (secret.length < 32) {
+    if (isProduction()) {
+      throw new Error(`CSRF_SECRET is only ${secret.length} characters. Use at least 32 characters.`)
+    }
+    logger.warn(`CSRF_SECRET is only ${secret.length} characters. Use 32+ characters for production.`)
+  }
+  return secret
 }
 
 export function getRedisUrl(): string {
@@ -64,3 +78,75 @@ export function getRedisUrl(): string {
 }
 
 export { isDevelopment, isProduction }
+
+export function validateProductionSecrets(): void {
+  if (!isProduction()) return
+
+  const errors: string[] = []
+
+  // JWT_SECRET
+  const jwtSecret = process.env.JWT_SECRET
+  if (!jwtSecret) {
+    errors.push("JWT_SECRET is required in production. Generate a random 32+ character string.")
+  } else if (jwtSecret.length < 32) {
+    errors.push(`JWT_SECRET is only ${jwtSecret.length} characters. Use at least 32 characters.`)
+  }
+
+  // ENCRYPTION_KEY
+  const encryptionKey = process.env.ENCRYPTION_KEY
+  if (!encryptionKey) {
+    errors.push("ENCRYPTION_KEY is required in production. Generate a random 32+ character string.")
+  } else if (encryptionKey.length < 32) {
+    errors.push(`ENCRYPTION_KEY is only ${encryptionKey.length} characters. Use at least 32 characters.`)
+  }
+
+  // CSRF_SECRET
+  const csrfSecret = process.env.CSRF_SECRET
+  if (!csrfSecret) {
+    errors.push("CSRF_SECRET is required in production. Generate a random 32+ character string.")
+  } else if (csrfSecret.length < 32) {
+    errors.push(`CSRF_SECRET is only ${csrfSecret.length} characters. Use at least 32 characters.`)
+  }
+
+  // DATABASE_URL
+  if (!process.env.DATABASE_URL) {
+    errors.push("DATABASE_URL is required in production.")
+  }
+
+  // META_APP_SECRET (for WhatsApp/Facebook)
+  if (!process.env.META_APP_SECRET) {
+    errors.push("META_APP_SECRET is required in production for WhatsApp/Facebook integration.")
+  }
+
+  // WA_WEBHOOK_SECRET
+  if (!process.env.WA_WEBHOOK_SECRET) {
+    errors.push("WA_WEBHOOK_SECRET is required in production for WhatsApp webhook verification.")
+  }
+
+  // STRIPE_SECRET_KEY
+  if (!process.env.STRIPE_SECRET_KEY) {
+    errors.push("STRIPE_SECRET_KEY is required in production for billing.")
+  }
+
+  // WhatsApp credentials (required for WhatsApp integration)
+  if (!process.env.WHATSAPP_ACCESS_TOKEN || !process.env.WHATSAPP_PHONE_NUMBER_ID || !process.env.WHATSAPP_WABA_ID) {
+    logger.warn("WhatsApp credentials (WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_WABA_ID) not all set — WhatsApp integration will be disabled.")
+  }
+
+  // Optional but recommended for production
+  const optionalWarnings: string[] = []
+  if (!process.env.NEXT_PUBLIC_APP_URL) optionalWarnings.push("NEXT_PUBLIC_APP_URL")
+  if (!process.env.OPENAI_API_KEY && !process.env.OPENROUTER_API_KEY) optionalWarnings.push("OPENAI_API_KEY or OPENROUTER_API_KEY (AI provider)")
+  if (!process.env.STRIPE_WEBHOOK_SECRET) optionalWarnings.push("STRIPE_WEBHOOK_SECRET")
+
+  if (optionalWarnings.length > 0) {
+    logger.warn(`Optional production environment variables not set: ${optionalWarnings.join(", ")}`)
+  }
+
+  if (errors.length > 0) {
+    const message = "Missing or invalid required production environment variables:\n" + errors.map((e) => `  - ${e}`).join("\n")
+    throw new Error(message)
+  }
+
+  logger.info("All required production environment variables validated successfully.")
+}

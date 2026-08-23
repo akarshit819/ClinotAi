@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db"
-import { requireActiveSubscription, checkUsageLimit } from "./feature-check"
+import { requireActiveSubscription, checkUsageLimit, canProcessMessaging } from "./feature-check"
 import { getPlanBySlug, isUnlimited, type PlanLimits } from "./plans"
 
 export interface UsageData {
@@ -86,6 +86,11 @@ export async function checkConversationLimit(clinicId: string): Promise<{ allowe
 }
 
 export async function incrementConversationCount(clinicId: string): Promise<void> {
+  const canProcess = await canProcessMessaging(clinicId)
+  if (!canProcess.allowed) {
+    throw new Error(canProcess.reason || "Subscription not active")
+  }
+
   const now = new Date()
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
 
@@ -113,6 +118,11 @@ export async function incrementTokenUsage(
   clinicId: string,
   tokens: { prompt: number; completion: number },
 ): Promise<void> {
+  const canProcess = await canProcessMessaging(clinicId)
+  if (!canProcess.allowed) {
+    throw new Error(canProcess.reason || "Subscription not active")
+  }
+
   const now = new Date()
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
 
