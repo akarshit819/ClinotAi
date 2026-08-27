@@ -22,7 +22,7 @@ export async function runAiReceptionist(
 
   // For appointment intent, ensure we always have a response to avoid silent WhatsApp failures
   let response = aiResult.response
-  const aiConfidence = response ? 0.85 : 0
+  const aiConfidence = (response && response.trim()) ? 0.85 : 0
 
   // For appointment intent, never route to clinic due to empty response - always provide fallback
   if (intent === "appointment" && !response) {
