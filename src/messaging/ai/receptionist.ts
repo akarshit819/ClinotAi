@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db"
-import { generateAIResponse } from "@/lib/ai"
+import { generateAIResponseWithTools } from "@/lib/ai"
 import { detectIntent } from "./intent"
 import type { Intent, IncomingMessage, PipelineContext } from "../types"
 
@@ -18,19 +18,23 @@ export async function runAiReceptionist(
     }
   }
 
-  const aiResponse = await generateAIResponse(message.content, context.clinicId, [])
+  const aiResult = await generateAIResponseWithTools(message.content, context.clinicId, [])
 
-  const aiConfidence = aiResponse ? 0.85 : 0
+  // For appointment intent, ensure we always have a response to avoid silent WhatsApp failures
+  let response = aiResult.response
+  const aiConfidence = response ? 0.85 : 0
 
-  // Send the AI reply whenever it produced a confident response. A low
-  // keyword-match confidence on a short greeting ("Hi", "Hello") must not
-  // suppress the reply - the receptionist should always acknowledge the
-  // patient. Only route to the clinic when the AI has no confident response,
-  // or when the intent explicitly needs human handling.
-  const requiresClinic = aiConfidence < 0.6 || intent === "appointment" || intent === "lead"
+  // For appointment intent, never route to clinic due to empty response - always provide fallback
+  if (intent === "appointment" && !response) {
+    response = "I'd be happy to help you book an appointment! Please share your full name, phone number, reason for your visit, and your preferred date and time."
+  }
+
+  // For appointment intent, let the AI handle it through tools instead of routing to clinic
+  // Don't route to clinic just because AI confidence is low - the appointment flow should continue
+  const requiresClinic = (aiConfidence < 0.6 && intent !== "appointment") || intent === "lead"
 
   return {
-    response: aiResponse || "I'll connect you with our team to help with your question.",
+    response: response || "I'll connect you with our team to help with your question.",
     intent,
     confidence: Math.max(intentConfidence, aiConfidence),
     requiresClinic,

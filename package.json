@@ -20,6 +20,7 @@
     "db:seed:whatsapp": "tsx src/seed-whatsapp.ts",
     "db:import:sqlite": "prisma generate --schema prisma/schema.sqlite.prisma && tsx scripts/import-sqlite-to-postgres.ts",
     "bootstrap:admin": "tsx src/bootstrap-admin.ts",
+    "worker": "tsx src/lib/jobs/worker.ts",
     "setup": "prisma generate && prisma db push && tsx src/seed.ts"
   },
   "dependencies": {
@@ -27,14 +28,18 @@
     "bcryptjs": "^2.4.3",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
+    "date-fns": "^4.4.0",
+    "date-fns-tz": "^3.2.0",
     "hash-wasm": "^4.12.0",
     "lucide-react": "^0.451.0",
     "next": "^14.2.15",
     "nodemailer": "^9.0.3",
+    "openai": "^7.5.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "stripe": "^22.3.2",
-    "tailwind-merge": "^2.5.0"
+    "tailwind-merge": "^2.5.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

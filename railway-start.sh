@@ -28,4 +28,12 @@ fi
 # creates users or demo data. Required for inbound webhooks + outbound replies.
 npx tsx src/seed-whatsapp.ts || echo "[railway] WhatsApp provisioning skipped or failed; continuing boot."
 
+# Worker mode: run background job processor instead of web server
+if [ "$WORKER_MODE" = "true" ]; then
+  echo "[railway] WORKER_MODE enabled - starting background worker..."
+  exec npm run worker
+fi
+
+# Web mode: start Next.js web server
+echo "[railway] Starting web server..."
 npm run start

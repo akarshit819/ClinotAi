@@ -62,15 +62,16 @@ model Clinic {
   knowledgeBase   KnowledgeBase[]
   apiConfigs      ApiConfig[]
   subscriptions   Subscription[]
-  invoices        Invoice[]
+invoices        Invoice[]
+
   billingHistory  BillingHistory[]
   paymentAttempts PaymentAttempt[]
   usage           AiUsage[]
   patients        Patient[]
   integrations    Integration[]
   whatsAppAccounts    WhatsAppBusinessAccount[]
+  jobs            Job[]
 }
-
 model Role {
   id          String           @id @default(cuid())
   clinicId    String
@@ -438,6 +439,7 @@ model Appointment {
   reason        String
   preferredDate String?
   preferredTime String?
+  endTime       String?
   doctor        String?
   notes         String?
   isEmergency   Boolean  @default(false)
@@ -449,6 +451,7 @@ model Appointment {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  @@unique([clinicId, doctor, preferredDate, preferredTime])
   @@index([clinicId])
   @@index([status])
   @@index([isEmergency])
@@ -651,6 +654,30 @@ model Subscription {
   @@index([plan])
   @@index([stripeSubscriptionId])
   @@index([stripeCustomerId])
+}
+
+model Job {
+  id            String   @id @default(cuid())
+  clinicId      String
+  clinic        Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  type          String
+  payload       Json
+  status        String   @default("PENDING")
+  priority      Int      @default(0)
+  attempts      Int      @default(0)
+  maxAttempts   Int      @default(3)
+  lastError     String?
+  scheduledAt   DateTime @default(now())
+  startedAt     DateTime?
+  completedAt   DateTime?
+  failedAt      DateTime?
+  idempotencyKey String?  @unique
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([clinicId, status])
+  @@index([status, scheduledAt])
+  @@index([idempotencyKey])
 }
 
 model Invoice {

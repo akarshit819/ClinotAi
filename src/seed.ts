@@ -3,6 +3,11 @@ import { argon2id } from "hash-wasm"
 import { prisma } from "./lib/db"
 import { ALL_PERMISSIONS, DEFAULT_ROLE_PERMISSIONS } from "./lib/permissions"
 
+function generateStrongPassword(): string {
+  const random = crypto.randomBytes(16).toString("base64url")
+  return `${random.slice(0, 16)}A9!x`
+}
+
 async function main() {
   const isProduction = process.env.NODE_ENV === "production"
   const explicitlyAllowed = process.env.CLINOT_SEED_DEMO === "true"
@@ -159,8 +164,9 @@ async function main() {
   }
 
   // Create demo admin user
+  const password = generateStrongPassword()
   const passwordHash = await argon2id({
-    password: "admin123",
+    password,
     salt: crypto.randomBytes(16),
     parallelism: 1,
     iterations: 3,
@@ -186,7 +192,7 @@ async function main() {
       isEmailVerified: true,
     },
   })
-  console.log(`Created user: ${user.email} / admin123`)
+  console.log(`Created user: ${user.email} / ${password}`)
 
   // Create FAQs
   const faqs = [

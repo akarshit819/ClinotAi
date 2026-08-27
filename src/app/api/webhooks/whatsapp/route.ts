@@ -2,10 +2,10 @@ import crypto from "crypto"
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/db"
 import { parseWebhookPayload, extractMessages, verifyWebhook } from "@/integrations/whatsapp/api"
-import { handlePlatformWebhook } from "@/messaging"
 import { canProcessMessaging } from "@/lib/billing"
 import { logger } from "@/lib/logger"
 import { timingSafeEqual, verifySignature, getWebhookSecret, getAppSecret } from "@/lib/webhook-utils"
+import { createJob } from "@/lib/jobs/queue"
 
 export async function GET(req: NextRequest) {
   try {
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     // Credentials are encrypted at rest so a plaintext search cannot match;
     // the WhatsAppPhoneNumber record is the canonical clinic link.
     const phoneRecord = await prisma.whatsAppPhoneNumber.findFirst({
-      where: { phoneNumberId },
+      where: { phoneNumberId } as any,
     })
     let clinicId: string | null = phoneRecord?.clinicId || null
 
@@ -115,15 +115,37 @@ export async function POST(req: NextRequest) {
           status: "processed",
         },
       })
+
+      // Update 24-hour window tracking on inbound patient message
+      if (msg.from && phoneNumberId) {
+        await prisma.whatsAppPhoneNumber.update({
+          where: { phoneNumberId } as any,
+          data: { lastMessageAt: new Date(parseInt(msg.timestamp) * 1000) },
+        })
+      }
+
+      // Enqueue job for async processing
+      await createJob("PROCESS_INBOUND_MESSAGE", {
+        clinicId,
+        message: {
+          platform: "whatsapp",
+          channelId: msg.from,
+          sourceMessageId: msg.id,
+          from: {
+            id: msg.from,
+            name: msg.contacts?.[0]?.name?.formatted_name || "Unknown",
+            phone: msg.from,
+          },
+          content: msg.text?.body || "",
+          timestamp: new Date(parseInt(msg.timestamp) * 1000),
+        },
+      }, {
+        idempotencyKey: `whatsapp-${msg.id}`,
+        priority: 10, // High priority for inbound messages
+      })
     }
 
-    try {
-      const result = await handlePlatformWebhook("whatsapp", body, Object.fromEntries(req.headers))
-      return NextResponse.json({ received: true, processed: result ? 1 : 0 })
-    } catch (error: unknown) {
-      logger.error("WhatsApp webhook processing failed", { error: error instanceof Error ? error.message : "Unknown error" })
-      return NextResponse.json({ received: true })
-    }
+    return NextResponse.json({ received: true, queued: messages.length })
   } catch (error: unknown) {
     logger.error("WhatsApp webhook route error", { error: error instanceof Error ? error.message : "Unknown error" })
     return NextResponse.json({ received: true })

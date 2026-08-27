@@ -1,8 +1,6 @@
 import { prisma } from "./lib/db"
 import { ALL_PERMISSIONS } from "./lib/permissions"
 import { registerClinic } from "./lib/auth"
-import crypto from "crypto"
-import { argon2id } from "hash-wasm"
 
 /**
  * Production-safe system provisioning.
@@ -106,70 +104,6 @@ async function main() {
     create: { slug: "general-dentistry", name: "General Dentistry", icon: "Stethoscope", isActive: true },
   })
   console.log("[seed-system] Ensured clinic template")
-
-  // Create default admin user if not exists (idempotent)
-  const adminEmail = "admin@clinot.ai"
-  const existingAdmin = await prisma.user.findUnique({ where: { email: adminEmail } })
-  if (!existingAdmin) {
-    console.log("[seed-system] Creating default admin user...")
-
-    // Get or create a default clinic for the admin
-    let clinic = await prisma.clinic.findFirst({ where: { slug: "demo-clinic" } })
-    if (!clinic) {
-      clinic = await prisma.clinic.create({
-        data: {
-          name: "Demo Clinic",
-          slug: "demo-clinic",
-          timezone: "America/New_York",
-          country: "US",
-          language: "en",
-          isOnboarded: true,
-          onboardingStep: 5,
-        },
-      })
-    }
-
-    // Get or create owner role
-    let ownerRole = await prisma.role.findFirst({
-      where: { clinicId: clinic.id, name: "owner" },
-    })
-    if (!ownerRole) {
-      ownerRole = await prisma.role.create({
-        data: {
-          clinicId: clinic.id,
-          name: "owner",
-          description: "Default owner role",
-          isSystem: true,
-        },
-      })
-    }
-
-    // Hash password
-    const passwordHash = await argon2id({
-      password: "admin123",
-      salt: crypto.randomBytes(16),
-      parallelism: 1,
-      iterations: 3,
-      memorySize: 19456,
-      hashLength: 32,
-      outputType: "encoded",
-    })
-
-    // Create admin user
-    await prisma.user.create({
-      data: {
-        clinicId: clinic.id,
-        email: adminEmail,
-        passwordHash,
-        name: "Admin User",
-        roleId: ownerRole.id,
-        isEmailVerified: true,
-      },
-    })
-    console.log(`[seed-system] Created default admin: ${adminEmail} / admin123`)
-  } else {
-    console.log("[seed-system] Default admin already exists, skipping.")
-  }
 
   console.log("[seed-system] System provisioning complete.")
 }

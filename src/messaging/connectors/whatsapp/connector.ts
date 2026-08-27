@@ -3,8 +3,10 @@ import type { IncomingMessage, Platform, ProcessedMessage } from "../../types"
 import type { WhatsAppWebhookPayload, WhatsAppIncomingMessage, WhatsAppConfig } from "@/integrations/whatsapp/types"
 import { parseWebhookPayload, extractMessages } from "@/integrations/whatsapp/api"
 import { sendWithRateLimit } from "@/integrations/whatsapp/delivery"
-import { createTextPayload, createMediaPayload } from "@/integrations/whatsapp/api"
+import { createTextPayload, createMediaPayload, sendMessage } from "@/integrations/whatsapp/api"
 import { getCredentials } from "@/integrations/token-store"
+import { evaluateMessagingPolicy, getTemplateForScenario } from "@/lib/messaging/policy"
+import { prisma } from "@/lib/db"
 
 export class WhatsAppConnector extends BaseConnector {
   platform: Platform = "whatsapp"
@@ -61,17 +63,64 @@ export class WhatsAppConnector extends BaseConnector {
   }
 
   async sendMessage(message: ProcessedMessage, credentials: Record<string, string>): Promise<boolean> {
+    // Determine message type and template if applicable
+    const isAppointmentRelated = message.metadata?.isAppointmentRelated === true
+    const templateName = message.metadata?.templateName
+    const templateLanguage = message.metadata?.templateLanguage
+    const templateComponents = message.metadata?.templateComponents
+
+    // Evaluate messaging policy
+    const policyDecision = await evaluateMessagingPolicy({
+      clinicId: message.clinicId,
+      phoneNumberId: credentials.phoneNumberId,
+      platform: "whatsapp",
+      messageType: templateName ? "template" : "freeform",
+      templateName,
+      templateLanguage,
+      templateComponents,
+      isAppointmentRelated,
+    })
+
+    if (!policyDecision.allowed) {
+      // Log and fail gracefully
+      return false
+    }
+
+    const to = message.metadata?.channelId || message.metadata?.from || ""
+    if (!to) return false
+
+    let payload: any
+
+    if (policyDecision.type === "template") {
+      // Send template message
+      const templateName = policyDecision.templateName
+      const languageCode = policyDecision.languageCode || "en_US"
+      const components = message.metadata?.templateComponents
+      
+      payload = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to,
+        type: "template",
+        template: {
+          name: templateName,
+          language: { code: languageCode },
+          components: templateComponents,
+        },
+      }
+    } else {
+      // Send freeform message
+      payload = this.buildPayload(message, to)
+    }
+
+    if (!payload) return false
+
     const config: WhatsAppConfig = {
       accessToken: credentials.accessToken,
       phoneNumberId: credentials.phoneNumberId,
       wabaId: credentials.wabaId,
       businessId: credentials.businessId,
     }
-    const to = message.metadata?.channelId || message.metadata?.from || ""
-    if (!to) return false
-
-    const payload = this.buildPayload(message, to)
-    if (!payload) return false
 
     const result = await sendWithRateLimit(config, to, payload)
     return result.success

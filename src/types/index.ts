@@ -1,8 +1,14 @@
-export type MessageRole = "user" | "assistant" | "system"
+export type MessageRole = "user" | "assistant" | "system" | "tool"
 
 export interface ChatMessage {
   role: MessageRole
-  content: string
+  content: string | null
+  tool_calls?: {
+    id: string
+    type: "function"
+    function: { name: string; arguments: string }
+  }[]
+  tool_call_id?: string
 }
 
 export interface ConversationWithMessages {
