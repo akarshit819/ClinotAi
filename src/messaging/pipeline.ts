@@ -4,7 +4,17 @@ import { getCredentials } from "@/integrations/token-store"
 import { resolvePatient } from "./patient/identity"
 import { runAiReceptionist } from "./ai/receptionist"
 import { shouldNotifyClinic, sendNotification } from "./notifications/service"
-import type { IncomingMessage, PipelineContext, ProcessedMessage, ConversationSummary } from "./types"
+import { enqueueMessage } from "@/integrations/whatsapp/delivery"
+import { createTextPayload } from "@/integrations/whatsapp/api"
+import { logger } from "@/lib/logger"
+import type {
+  IncomingMessage,
+  PipelineContext,
+  ProcessedMessage,
+  ConversationSummary,
+} from "./types"
+import type { ChatMessage } from "@/types"
+import { AI } from "@/config/constants"
 
 async function getOrCreateConversation(
   clinicId: string,
@@ -21,7 +31,11 @@ async function getOrCreateConversation(
     orderBy: { lastMessageAt: "desc" },
     include: {
       patient: { select: { id: true, name: true } },
-      messages: { orderBy: { createdAt: "desc" }, take: 1, select: { content: true, role: true, createdAt: true } },
+      messages: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { content: true, role: true, createdAt: true },
+      },
     },
   })
 
@@ -41,7 +55,7 @@ async function getOrCreateConversation(
       unreadCount: existing.unreadCount,
       lastMessageAt: existing.lastMessageAt || undefined,
       lastMessage: existing.messages[0]?.content?.slice(0, 120) || undefined,
-      lastMessageFrom: existing.messages[0]?.role as any || undefined,
+      lastMessageFrom: (existing.messages[0]?.role as any) || undefined,
       createdAt: existing.createdAt,
       updatedAt: existing.updatedAt,
     }
@@ -74,6 +88,37 @@ async function getOrCreateConversation(
     createdAt: created.createdAt,
     updatedAt: created.updatedAt,
   }
+}
+
+/**
+ * Load the last N conversation messages and return them as ChatMessage[]
+ * for the AI to use as context (multi-turn conversation history).
+ * Uses descending order + take so long conversations keep their MOST RECENT
+ * messages (not the oldest), then reverses back to chronological order.
+ */
+async function loadConversationHistory(
+  conversationId: string,
+  maxMessages = AI.maxHistoryMessages,
+  excludeMessageId?: string,
+): Promise<ChatMessage[]> {
+  const messages = await prisma.conversationMessage.findMany({
+    where: {
+      conversationId,
+      role: { in: ["user", "assistant"] },
+      ...(excludeMessageId ? { id: { not: excludeMessageId } } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: maxMessages,
+    select: { role: true, content: true },
+  })
+
+  return messages
+    .reverse()
+    .filter((m) => m.content && m.content.trim())
+    .map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+    }))
 }
 
 async function loadClinicContext(clinicId: string) {
@@ -117,9 +162,23 @@ export async function processIncomingMessage(
   clinicId: string,
   message: IncomingMessage,
 ): Promise<{ conversationId: string; response?: string; requiresClinic: boolean }> {
+  logger.info("[WHATSAPP-INBOUND] Processing incoming message", {
+    clinicId,
+    platform: message.platform,
+    channelId: message.channelId,
+    sourceMessageId: message.sourceMessageId,
+  })
+
   const identity = await resolvePatient(clinicId, message)
 
   const conversation = await getOrCreateConversation(clinicId, message, identity.patientId)
+
+  logger.info("[WHATSAPP-INBOUND] Conversation resolved", {
+    clinicId,
+    conversationId: conversation.id,
+    patientId: identity.patientId,
+    isNew: !conversation.lastMessage,
+  })
 
   const storedMessageId = await storeMessage(conversation.id, message, "user", "processing")
 
@@ -129,11 +188,21 @@ export async function processIncomingMessage(
   })
 
   const context = await loadClinicContext(clinicId)
-  if (!context.clinic) throw new Error("Clinic not found")
+  if (!context.clinic) throw new Error("Clinic not found: " + clinicId)
 
   await prisma.conversation.update({
     where: { id: conversation.id },
     data: { unreadCount: { increment: 1 }, lastMessageAt: new Date() },
+  })
+
+  // Load conversation history for multi-turn AI context.
+  // Exclude the message we just stored — the current turn is appended
+  // separately by buildConversationContext.
+  const historyForAI = await loadConversationHistory(conversation.id, AI.maxHistoryMessages, storedMessageId)
+
+  logger.info("[AI-RECEPTIONIST] Loaded conversation history", {
+    conversationId: conversation.id,
+    historyMessages: historyForAI.length,
   })
 
   const pipelineCtx = {
@@ -155,9 +224,9 @@ export async function processIncomingMessage(
     isEmergency: false,
   }
 
-  const aiResult = await runAiReceptionist(pipelineCtx, message)
+  const aiResult = await runAiReceptionist(pipelineCtx, message, historyForAI)
 
-  const connector = getConnector(message.platform)
+  // Always store the AI response (even if empty — for audit trail)
   const outgoing: IncomingMessage = {
     platform: message.platform,
     channelId: message.channelId,
@@ -167,7 +236,13 @@ export async function processIncomingMessage(
     timestamp: new Date(),
   }
 
-  await storeMessage(conversation.id, outgoing, "assistant", aiResult.requiresClinic ? "waiting_clinic" : "ai_responded", aiResult.intent)
+  await storeMessage(
+    conversation.id,
+    outgoing,
+    "assistant",
+    aiResult.requiresClinic ? "waiting_clinic" : "ai_responded",
+    aiResult.intent,
+  )
 
   const newStatus = aiResult.requiresClinic ? "waiting_clinic" : "active"
   await prisma.conversation.update({
@@ -184,7 +259,12 @@ export async function processIncomingMessage(
     },
   })
 
-  const notification = await shouldNotifyClinic(clinicId, aiResult.intent, aiResult.confidence, aiResult.intent === "emergency")
+  const notification = await shouldNotifyClinic(
+    clinicId,
+    aiResult.intent,
+    aiResult.confidence,
+    aiResult.intent === "emergency",
+  )
   if (notification) {
     notification.conversationId = conversation.id
     notification.platform = message.platform
@@ -192,27 +272,75 @@ export async function processIncomingMessage(
     sendNotification(notification)
   }
 
-  if (connector && !aiResult.requiresClinic) {
-    const credentials = await getPlatformCredentials(clinicId, message.platform)
-    if (credentials) {
-      const processedMsg: ProcessedMessage = {
-        id: storedMessageId,
-        clinicId,
-        conversationId: conversation.id,
-        patientId: identity.patientId,
-        platform: message.platform,
-        direction: "outgoing",
-        role: "assistant",
-        content: aiResult.response,
-        intent: aiResult.intent,
-        confidence: aiResult.confidence,
-        status: aiResult.requiresClinic ? "waiting_clinic" : "ai_responded",
-        sourceMessageId: outgoing.sourceMessageId,
-        metadata: { channelId: message.channelId, from: message.channelId },
-        createdAt: new Date(),
+  // Send the outbound reply only if AI produced a response and the clinic doesn't need to handle it
+  if (!aiResult.requiresClinic && aiResult.response && aiResult.response.trim()) {
+    if (message.platform === "whatsapp") {
+      // Use durable job queue for WhatsApp — ensures retry on failure, never lost
+      const credentials = await getPlatformCredentials(clinicId, message.platform)
+      if (credentials) {
+        const waPayload = createTextPayload(message.channelId, aiResult.response)
+        const outboundJobId = await enqueueMessage(
+          clinicId,
+          message.channelId,
+          waPayload,
+          {
+            priority: 10,
+            retries: 3,
+            phoneNumberId: credentials.phoneNumberId,
+          },
+        )
+        logger.info("[OUTBOUND-JOB] WhatsApp message enqueued for delivery", {
+          clinicId,
+          conversationId: conversation.id,
+          outboundJobId,
+          to: message.channelId,
+          responseLength: aiResult.response.length,
+        })
+      } else {
+        logger.error("[OUTBOUND-JOB] No WhatsApp credentials — outbound message cannot be sent", {
+          clinicId,
+          conversationId: conversation.id,
+        })
       }
-      connector.sendMessage(processedMsg, credentials).catch(console.error)
+    } else {
+      // For non-WhatsApp platforms keep the existing inline-send path
+      const connector = getConnector(message.platform)
+      if (connector) {
+        const credentials = await getPlatformCredentials(clinicId, message.platform)
+        if (credentials) {
+          const processedMsg: ProcessedMessage = {
+            id: storedMessageId,
+            clinicId,
+            conversationId: conversation.id,
+            patientId: identity.patientId,
+            platform: message.platform,
+            direction: "outgoing",
+            role: "assistant",
+            content: aiResult.response,
+            intent: aiResult.intent,
+            confidence: aiResult.confidence,
+            status: "ai_responded",
+            sourceMessageId: outgoing.sourceMessageId,
+            metadata: { channelId: message.channelId, from: message.channelId },
+            createdAt: new Date(),
+          }
+          connector.sendMessage(processedMsg, credentials).catch((err) => {
+            logger.error("[OUTBOUND] Inline connector send failed", {
+              platform: message.platform,
+              clinicId,
+              conversationId: conversation.id,
+              error: err?.message,
+            })
+          })
+        }
+      }
     }
+  } else if (!aiResult.requiresClinic && (!aiResult.response || !aiResult.response.trim())) {
+    logger.error("[OUTBOUND-JOB] AI produced empty response — no message sent to patient", {
+      clinicId,
+      conversationId: conversation.id,
+      intent: aiResult.intent,
+    })
   }
 
   return {
@@ -222,10 +350,11 @@ export async function processIncomingMessage(
   }
 }
 
-async function getPlatformCredentials(clinicId: string, platform: string): Promise<Record<string, string> | null> {
+async function getPlatformCredentials(
+  clinicId: string,
+  platform: string,
+): Promise<Record<string, string> | null> {
   try {
-    // Credentials are encrypted at rest; decrypt through the token store and
-    // map to the flat shape the connectors expect.
     const creds = await getCredentials(clinicId, platform)
     if (!creds?.accessToken) return null
     const meta = creds.metadata || {}

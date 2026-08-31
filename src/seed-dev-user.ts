@@ -94,7 +94,7 @@ async function main(): Promise<void> {
   }
 
   // Use a known password when provided via CLINOT_DEV_USER_PASSWORD (e.g. on
-  // Railway), otherwise generate a random one and print it.
+  // Railway), otherwise generate a random one and print it (non-production only).
   let password = process.env.CLINOT_DEV_USER_PASSWORD ?? ""
   if (password) {
     const strength = checkPasswordStrength(password)
@@ -102,6 +102,13 @@ async function main(): Promise<void> {
       console.error(`[dev-user] CLINOT_DEV_USER_PASSWORD is too weak: ${strength.message}`)
       process.exit(1)
     }
+  } else if (inProduction) {
+    // In production a generated password would be unknowable (it is never
+    // echoed into deploy logs) — require the operator to supply one.
+    console.error(
+      "[dev-user] CLINOT_DEV_SEED=true in production requires CLINOT_DEV_USER_PASSWORD to be set."
+    )
+    process.exit(1)
   } else {
     password = generateStrongPassword()
   }
@@ -145,7 +152,12 @@ async function main(): Promise<void> {
   console.log("============================================================")
   console.log("  This is a development/test account only. Do not use in production.")
   console.log("  Login email : " + TEST_EMAIL)
-  console.log("  Password    : " + password)
+  // Never echo credentials into production deploy logs.
+  if (inProduction) {
+    console.log("  Password    : (hidden in production — value of CLINOT_DEV_USER_PASSWORD)")
+  } else {
+    console.log("  Password    : " + password)
+  }
   console.log("  Phone       : " + TEST_PHONE)
   console.log("  Country     : " + TEST_COUNTRY + " (India)")
   console.log("  Clinic      : " + TEST_CLINIC_NAME)

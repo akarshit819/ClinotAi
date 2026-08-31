@@ -1,36 +1,37 @@
 import { prisma } from "./lib/db"
-import { registerClinic } from "./lib/auth"
-import { checkPasswordStrength } from "./lib/auth"
+import { registerClinic, checkPasswordStrength } from "./lib/auth"
+import { ALL_PERMISSIONS } from "./lib/permissions"
+import fs from "fs"
+import path from "path"
 
 /**
  * Production Admin Bootstrap
  *
- * Creates the initial owner/admin account for a new production deployment.
- * This script MUST be explicitly invoked — it never runs automatically on boot.
+ * Creates the initial owner/admin account for a new production or staging deployment.
+ * This script MUST be explicitly invoked or opted into via CLINOT_BOOTSTRAP_ADMIN=true.
  *
  * Requirements:
- * - NODE_ENV=production
  * - CLINOT_BOOTSTRAP_ADMIN=true (explicit opt-in)
  * - BOOTSTRAP_ADMIN_EMAIL: email for the initial admin
  * - BOOTSTRAP_ADMIN_PASSWORD: strong password (validated via checkPasswordStrength)
- * - BOOTSTRAP_ADMIN_NAME: name for the admin user
- * - BOOTSTRAP_CLINIC_NAME: name for the clinic
- * - BOOTSTRAP_CLINIC_COUNTRY: country code (e.g., "US")
- * - BOOTSTRAP_CLINIC_TIMEZONE: timezone (e.g., "America/New_York")
+ *
+ * Optional (with sensible defaults):
+ * - BOOTSTRAP_ADMIN_NAME: name for the admin user (default: "Admin")
+ * - BOOTSTRAP_CLINIC_NAME: name for the clinic (default: "Clinot Dental Clinic")
+ * - BOOTSTRAP_CLINIC_COUNTRY: country code (default: "US")
+ * - BOOTSTRAP_CLINIC_TIMEZONE: timezone (default: "America/New_York")
  *
  * Safety:
- * - Refuses to run unless NODE_ENV=production AND CLINOT_BOOTSTRAP_ADMIN=true
- * - Refuses if an admin user already exists in any clinic
- * - Validates password strength using the same rules as normal signup
- * - Uses the same registerClinic logic as the public signup endpoint
+ * - Refuses to run unless CLINOT_BOOTSTRAP_ADMIN=true
+ * - Refuses if an admin/owner user with this email or clinic already exists
+ * - Validates password strength using standard rules
+ * - Automatically ensures permissions exist before role assignment
  * - Never logs the password
- * - Exits successfully without changes if admin already exists
+ * - Exits cleanly without changes if admin already exists
  */
 
 function loadDotEnv(): void {
   try {
-    const fs = require("fs")
-    const path = require("path")
     const envPath = path.resolve(process.cwd(), ".env")
     if (!fs.existsSync(envPath)) return
     const lines = fs.readFileSync(envPath, "utf8").split(/\r?\n/)
@@ -50,36 +51,44 @@ function loadDotEnv(): void {
       if (process.env[key] === undefined) process.env[key] = value
     }
   } catch {
-    // Ignore load errors; rely on the environment.
+    // Ignore load errors; rely on process environment.
+  }
+}
+
+async function ensurePermissions(): Promise<void> {
+  for (const perm of ALL_PERMISSIONS) {
+    await prisma.permission.upsert({
+      where: { code: perm.code },
+      update: { name: perm.name, description: perm.description, module: perm.module },
+      create: { code: perm.code, name: perm.name, description: perm.description, module: perm.module },
+    })
   }
 }
 
 async function main(): Promise<void> {
   loadDotEnv()
 
-  const inProduction = process.env.NODE_ENV === "production"
   const explicitlyAllowed = process.env.CLINOT_BOOTSTRAP_ADMIN === "true"
 
-  if (!inProduction || !explicitlyAllowed) {
+  if (!explicitlyAllowed) {
     console.error(
-      "[bootstrap-admin] This script only runs in production with CLINOT_BOOTSTRAP_ADMIN=true. " +
-        "Set NODE_ENV=production and CLINOT_BOOTSTRAP_ADMIN=true to run."
+      "[bootstrap-admin] This script requires CLINOT_BOOTSTRAP_ADMIN=true. " +
+        "Set CLINOT_BOOTSTRAP_ADMIN=true in your environment to execute."
     )
     process.exit(1)
   }
 
   const email = process.env.BOOTSTRAP_ADMIN_EMAIL?.trim()
   const password = process.env.BOOTSTRAP_ADMIN_PASSWORD
-  const name = process.env.BOOTSTRAP_ADMIN_NAME?.trim()
-  const clinicName = process.env.BOOTSTRAP_CLINIC_NAME?.trim()
-  const clinicCountry = process.env.BOOTSTRAP_CLINIC_COUNTRY?.trim()
-  const clinicTimezone = process.env.BOOTSTRAP_CLINIC_TIMEZONE?.trim()
+  const name = process.env.BOOTSTRAP_ADMIN_NAME?.trim() || "Admin"
+  const clinicName = process.env.BOOTSTRAP_CLINIC_NAME?.trim() || "Clinot Dental Clinic"
+  const clinicCountry = process.env.BOOTSTRAP_CLINIC_COUNTRY?.trim() || "US"
+  const clinicTimezone = process.env.BOOTSTRAP_CLINIC_TIMEZONE?.trim() || "America/New_York"
 
-  if (!email || !password || !name || !clinicName || !clinicCountry || !clinicTimezone) {
+  if (!email || !password) {
     console.error(
       "[bootstrap-admin] Missing required environment variables. " +
-        "Required: BOOTSTRAP_ADMIN_EMAIL, BOOTSTRAP_ADMIN_PASSWORD, BOOTSTRAP_ADMIN_NAME, " +
-        "BOOTSTRAP_CLINIC_NAME, BOOTSTRAP_CLINIC_COUNTRY, BOOTSTRAP_CLINIC_TIMEZONE"
+        "Required: BOOTSTRAP_ADMIN_EMAIL, BOOTSTRAP_ADMIN_PASSWORD"
     )
     process.exit(1)
   }
@@ -90,7 +99,23 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
+  console.log("[bootstrap-admin] Ensuring system permissions exist...")
+  await ensurePermissions()
+
   console.log("[bootstrap-admin] Checking for existing admin users...")
+
+  // Check if user with this email already exists
+  const existingUser = await prisma.user.findUnique({
+    where: { email: email.toLowerCase() },
+    include: { role: true, clinic: true },
+  })
+
+  if (existingUser) {
+    console.log(
+      `[bootstrap-admin] Admin user with email ${existingUser.email} already exists (Clinic: ${existingUser.clinic.name}). No action taken.`
+    )
+    return
+  }
 
   // Check if any owner-role user already exists
   const existingOwner = await prisma.user.findFirst({
@@ -100,8 +125,7 @@ async function main(): Promise<void> {
 
   if (existingOwner) {
     console.log(
-      `[bootstrap-admin] Admin user already exists (${existingOwner.email} in clinic ${existingOwner.clinic.name}). ` +
-        "No action taken."
+      `[bootstrap-admin] Owner account already exists (${existingOwner.email} in clinic ${existingOwner.clinic.name}). No action taken.`
     )
     return
   }
@@ -126,7 +150,7 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  // Apply the requested clinic profile to the newly-created clinic only.
+  // Apply the requested clinic profile to the newly-created clinic
   await prisma.clinic.update({
     where: { id: result.user.clinicId },
     data: {
@@ -149,7 +173,7 @@ async function main(): Promise<void> {
   console.log("  Timezone    : " + clinicTimezone)
   console.log("============================================================")
   console.log("")
-  console.log("[bootstrap-admin] Bootstrap complete. Remove CLINOT_BOOTSTRAP_ADMIN from environment.")
+  console.log("[bootstrap-admin] Bootstrap complete. You can now log in.")
 }
 
 main()

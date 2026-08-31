@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db"
-import { addMinutes, startOfDay, endOfDay, format, parse, isWithinInterval, addDays, isBefore, isAfter, setHours, setMinutes, differenceInMinutes } from "date-fns"
+import { Prisma } from "@prisma/client"
+import { addMinutes, startOfDay, endOfDay, format, parse, isBefore, isAfter, addDays, setHours, setMinutes, differenceInMinutes } from "date-fns"
 import { toZonedTime, formatInTimeZone } from "date-fns-tz"
 
 export interface ClinicHours {
@@ -118,19 +119,37 @@ export async function getProvidersForClinic(clinicId: string): Promise<ProviderS
   }))
 }
 
+/**
+ * Strict interval overlap: two half-open ranges [start, end) conflict when
+ * one starts before the other ends and vice versa. Touching endpoints
+ * (slot A ends exactly when slot B starts) do NOT conflict.
+ */
+function intervalsOverlap(
+  aStart: Date,
+  aEnd: Date,
+  bStart: Date,
+  bEnd: Date
+): boolean {
+  return isBefore(aStart, bEnd) && isAfter(aEnd, bStart)
+}
+
 async function getBookedSlots(
   clinicId: string,
   startDate: Date,
   endDate: Date,
-  providerId?: string
+  providerId?: string,
+  client: Prisma.TransactionClient = prisma as unknown as Prisma.TransactionClient
 ): Promise<BookedSlot[]> {
+  const startDateStr = format(startDate, "yyyy-MM-dd")
+  const endDateStr = format(endDate, "yyyy-MM-dd")
+
   const where: any = {
     clinicId,
     status: { in: ["pending", "confirmed", "in_progress"] },
     isEmergency: false,
-    createdAt: {
-      gte: startOfDay(startDate),
-      lte: endOfDay(endDate),
+    preferredDate: {
+      gte: startDateStr,
+      lte: endDateStr,
     },
   }
 
@@ -138,19 +157,20 @@ async function getBookedSlots(
     where.doctor = providerId
   }
 
-  const appointments = await prisma.appointment.findMany({
+  const appointments = await client.appointment.findMany({
     where,
     select: {
       id: true,
       preferredDate: true,
       preferredTime: true,
+      endTime: true,
       doctor: true,
       clinicId: true,
     },
   })
 
   // Fetch timezone once
-  const clinic = await prisma.clinic.findUnique({
+  const clinic = await client.clinic.findUnique({
     where: { id: clinicId },
     select: { timezone: true },
   })
@@ -164,7 +184,10 @@ async function getBookedSlots(
         a.preferredTime!,
         timezone
       )
-      const endTime = addMinutes(startTime, DEFAULT_APPOINTMENT_DURATION)
+      // Use the stored end time when present; fall back to the default duration
+      const endTime = a.endTime
+        ? combineDateAndTime(parse(a.preferredDate!, "yyyy-MM-dd", new Date()), a.endTime, timezone)
+        : addMinutes(startTime, DEFAULT_APPOINTMENT_DURATION)
 
       return {
         id: a.id,
@@ -221,13 +244,13 @@ export async function generateAvailableSlots(
         differenceInMinutes(dayEndTime, currentTime) >= durationMinutes) {
         const slotEnd = addMinutes(currentTime, durationMinutes)
 
-        // Check if slot is booked
+        // Check if slot is booked — conflict must be with the SAME provider
+        // (parenthesization matters: without it, another provider's booking
+        // would incorrectly block this provider's slot)
         const isBooked = bookedSlots.some(
           (booked) =>
             booked.providerId === provider.providerId &&
-            isWithinInterval(currentTime, { start: booked.startTime, end: booked.endTime }) ||
-            isWithinInterval(slotEnd, { start: booked.startTime, end: booked.endTime }) ||
-            (isBefore(currentTime, booked.startTime) && isAfter(slotEnd, booked.endTime))
+            intervalsOverlap(currentTime, slotEnd, booked.startTime, booked.endTime)
         )
 
         slots.push({
@@ -303,10 +326,7 @@ export async function checkSlotAvailability(
   )
 
   return !bookedSlots.some(
-    (booked) =>
-      isWithinInterval(startTime, { start: booked.startTime, end: booked.endTime }) ||
-      isWithinInterval(endTime, { start: booked.startTime, end: booked.endTime }) ||
-      (isBefore(startTime, booked.startTime) && isAfter(endTime, booked.endTime))
+    (booked) => intervalsOverlap(startTime, endTime, booked.startTime, booked.endTime)
   )
 }
 
@@ -321,45 +341,79 @@ export async function reserveSlot(
   phone: string,
   email?: string
 ) {
-  return await prisma.$transaction(async (tx) => {
-    // Re-check availability within transaction
-    const bookedSlots = await getBookedSlots(
-      clinicId,
-      startOfDay(startTime),
-      endOfDay(startTime),
-      providerId
-    )
+  // Serializable isolation + a transaction-scoped availability re-check makes
+  // concurrent bookings for the same provider/slot abort instead of double
+  // booking; the [clinicId, doctor, preferredDate, preferredTime] unique
+  // constraint is the final DB-level guard (P2002).
+  const maxRetries = 3
+  let lastError: unknown
 
-    const isBooked = bookedSlots.some(
-      (booked) =>
-        booked.providerId === providerId &&
-        (isWithinInterval(startTime, { start: booked.startTime, end: booked.endTime }) ||
-          isWithinInterval(endTime, { start: booked.startTime, end: booked.endTime }) ||
-          (isBefore(startTime, booked.startTime) && isAfter(endTime, booked.endTime)))
-    )
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await prisma.$transaction(
+        async (tx) => {
+          const clinic = await tx.clinic.findUnique({
+            where: { id: clinicId },
+            select: { timezone: true },
+          })
+          const timezone = clinic?.timezone || "America/New_York"
 
-    if (isBooked) {
-      throw new Error("SLOT_NO_LONGER_AVAILABLE")
+          // Re-check availability WITHIN the transaction (tx-scoped read)
+          const bookedSlots = await getBookedSlots(
+            clinicId,
+            startOfDay(startTime),
+            endOfDay(startTime),
+            providerId,
+            tx
+          )
+
+          const isBooked = bookedSlots.some(
+            (booked) =>
+              booked.providerId === providerId &&
+              intervalsOverlap(startTime, endTime, booked.startTime, booked.endTime)
+          )
+
+          if (isBooked) {
+            throw new Error("SLOT_NO_LONGER_AVAILABLE")
+          }
+
+          // Store the clinic-local wall clock so the read path
+          // (getBookedSlots via combineDateAndTime) round-trips exactly.
+          const appointment = await tx.appointment.create({
+            data: {
+              clinicId,
+              patientId,
+              doctor: providerId,
+              preferredDate: formatInTimeZone(startTime, timezone, "yyyy-MM-dd"),
+              preferredTime: formatInTimeZone(startTime, timezone, "HH:mm"),
+              endTime: formatInTimeZone(endTime, timezone, "HH:mm"),
+              reason,
+              patientName: patientName,
+              phone: phone,
+              email: email || null,
+              status: "confirmed",
+              isEmergency: false,
+            },
+          })
+
+          return appointment
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+      )
+    } catch (error: any) {
+      lastError = error
+      // P2034: serialization conflict — retry with a small backoff
+      if (error?.code === "P2034" && attempt < maxRetries - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)))
+        continue
+      }
+      // P2002: unique constraint on [clinicId, doctor, preferredDate, preferredTime]
+      // lost the race — surface as a slot conflict
+      if (error?.code === "P2002") {
+        throw new Error("SLOT_NO_LONGER_AVAILABLE")
+      }
+      throw error
     }
-
-    // Create appointment
-    const appointment = await tx.appointment.create({
-      data: {
-        clinicId,
-        patientId,
-        doctor: providerId,
-        preferredDate: startTime.toISOString().split("T")[0],
-        preferredTime: startTime.toTimeString().substring(0, 5),
-        endTime: endTime.toISOString().split("T")[1].substring(0, 5),
-        reason,
-        patientName: patientName,
-        phone: phone,
-        email: email || null,
-        status: "confirmed",
-        isEmergency: false,
-      },
-    })
-
-    return appointment
-  })
+  }
+  throw lastError
 }

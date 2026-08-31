@@ -88,11 +88,11 @@ export const APPOINTMENT_TOOLS = {
 
   book_appointment: {
     name: "book_appointment",
-    description: "Book an appointment slot. Use ONLY after confirming availability with check_slot_availability. Requires patient info and confirmed slot time. All fields are required.",
+    description: "Book an appointment slot. Use ONLY after confirming availability with check_slot_availability. Requires patient info and confirmed slot time. patientId is optional — if omitted the system will look up or create the patient by phone number automatically.",
     parameters: z.object({
       clinicId: z.string().describe("The clinic ID"),
-      patientId: z.string().describe("The patient ID"),
-      providerId: z.string().describe("Provider/doctor ID"),
+      patientId: z.string().optional().describe("The patient ID (optional — system will resolve from phone if not provided)"),
+      providerId: z.string().describe("Provider/doctor ID — obtain from find_available_slots or get_next_available_slots"),
       startTime: z.string().describe("Start time in ISO format"),
       endTime: z.string().describe("End time in ISO format"),
       reason: z.string().describe("Reason for appointment"),
@@ -103,7 +103,6 @@ export const APPOINTMENT_TOOLS = {
     execute: async (args: any) => {
       const requiredFields = [
         { key: "clinicId", label: "Clinic ID" },
-        { key: "patientId", label: "Patient ID" },
         { key: "providerId", label: "Provider/doctor ID" },
         { key: "startTime", label: "Start time (ISO format)" },
         { key: "endTime", label: "End time (ISO format)" },
@@ -124,12 +123,34 @@ export const APPOINTMENT_TOOLS = {
         }
       }
 
+      // Resolve patientId: use provided value, or look up / create patient by phone
+      let patientId: string = args.patientId || ""
+      if (!patientId || patientId.trim() === "") {
+        const existing = await prisma.patient.findFirst({
+          where: { clinicId: args.clinicId, phone: args.phone },
+          select: { id: true },
+        })
+        if (existing) {
+          patientId = existing.id
+        } else {
+          const created = await prisma.patient.create({
+            data: {
+              clinicId: args.clinicId,
+              name: args.patientName,
+              phone: args.phone,
+              email: args.email || null,
+            },
+          })
+          patientId = created.id
+        }
+      }
+
       const appointment = await reserveSlot(
         args.clinicId,
         new Date(args.startTime),
         new Date(args.endTime),
         args.providerId,
-        args.patientId,
+        patientId,
         args.reason,
         args.patientName,
         args.phone,

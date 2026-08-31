@@ -348,13 +348,20 @@ export async function generateAIResponseWithTools(
 
               const toolResults = await Promise.all(
                 providerResponse.toolCalls.map(async (tc) => {
+                  logger.info("[AI-TOOL] Tool call requested", {
+                    clinicId,
+                    toolName: tc.function.name,
+                    arguments: tc.function.arguments,
+                  })
+
                   // PRE-VALIDATION: Intercept book_appointment calls with missing required params
                   if (tc.function.name === "book_appointment") {
                     try {
                       const args = JSON.parse(tc.function.arguments)
-                      const requiredFields = ["clinicId", "patientId", "providerId", "startTime", "endTime", "reason", "patientName", "phone"]
+                      const requiredFields = ["providerId", "startTime", "endTime", "reason", "patientName", "phone"]
                       const missing = requiredFields.filter(f => !args[f] || (typeof args[f] === "string" && args[f].trim() === ""))
                       if (missing.length > 0) {
+                        logger.warn("[AI-TOOL] Pre-validation failed for book_appointment", { missing, clinicId })
                         return { 
                           name: tc.function.name, 
                           result: null, 
@@ -367,9 +374,21 @@ export async function generateAIResponseWithTools(
                   }
                   
                   const result = await executeToolCall(tc, clinicId)
+                  logger.info("[AI-TOOL] Tool execution result", {
+                    clinicId,
+                    toolName: result.name,
+                    success: !result.error,
+                    error: result.error,
+                  })
                   return { name: result.name, result: result.result, error: result.error }
                 })
               )
+
+              // If a booking succeeded but we're on the last iteration, record fallback confirmation
+              const bookingResult = toolResults.find(r => r.name === "book_appointment" && r.result?.success)
+              if (bookingResult?.result?.confirmation && (!response || !response.trim())) {
+                response = bookingResult.result.confirmation
+              }
 
               for (let i = 0; i < providerResponse.toolCalls.length; i++) {
                 const tc = providerResponse.toolCalls[i]

@@ -5,13 +5,14 @@ set -e
 # ARCHITECTURE (no recursion, one process per service):
 #
 #   WEB SERVICE  (WORKER_MODE unset/false):
-#     prisma generate → prisma migrate deploy → seeds → Next server
+#     prisma generate → prisma migrate deploy → seeds → Next standalone server
 #     The WEB service is the ONLY place migrations run.
 #
 #   WORKER SERVICE (WORKER_MODE=true):
 #     npm run worker → worker.ts (validates env, waits for PostgreSQL, polls
 #     forever). NO migrations, NO Next.js — so Web + Worker booting at the
-#     same time can never race on `prisma migrate deploy`.
+#     same time can never race on `prisma migrate deploy`. The worker waits
+#     for the database and starts processing once the Web service is done.
 # ============================================================================
 
 # 1. Worker mode: start the background worker directly.

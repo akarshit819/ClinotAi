@@ -91,8 +91,20 @@ async function main() {
     },
   })
 
-  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || "https://clinot-production.up.railway.app").replace(/\/+$/, "")
-  const subscribed = await registerWebhook(config, `${baseUrl}/api/webhooks/whatsapp`)
+  // Register the webhook against this deployment's own public URL. Never
+  // fall back to a hardcoded third-party domain: without NEXT_PUBLIC_APP_URL
+  // the subscription would point at the wrong server and silently break
+  // inbound messages.
+  const rawBaseUrl = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "")
+  if (!rawBaseUrl) {
+    console.warn(
+      "[seed-whatsapp] NEXT_PUBLIC_APP_URL is not set — skipping webhook registration. " +
+        "Set it to this deployment's public URL (e.g. https://your-app.example.com) so inbound WhatsApp messages reach the app."
+    )
+  }
+  const subscribed = rawBaseUrl
+    ? await registerWebhook(config, `${rawBaseUrl}/api/webhooks/whatsapp`)
+    : false
 
   await prisma.whatsAppPhoneNumber.updateMany({
     where: { clinicId: clinic.id, phoneNumberId: config.phoneNumberId },

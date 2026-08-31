@@ -88,7 +88,19 @@ export async function getPendingJobs(
     where: {
       clinicId,
       status: "PENDING",
-      scheduledAt: { lte: new Date() },
+      scheduledAt: { lte: now },
+    },
+    orderBy: [{ priority: "desc" }, { scheduledAt: "asc" }],
+    take: limit,
+  })
+}
+
+export async function getAllPendingJobs(limit = 10) {
+  const now = new Date()
+  return prisma.job.findMany({
+    where: {
+      status: "PENDING",
+      scheduledAt: { lte: now },
     },
     orderBy: [{ priority: "desc" }, { scheduledAt: "asc" }],
     take: limit,
@@ -136,7 +148,9 @@ export async function failJob(
   const job = await prisma.job.findUnique({ where: { id: jobId } })
   if (!job) return
 
-  const attempts = job.attempts + 1
+  // claimJob() already incremented `attempts` for the current (failed) run,
+  // so job.attempts is the number of consumed attempts — do not add 1 again.
+  const attempts = job.attempts
   const isLastAttempt = attempts >= job.maxAttempts
 
   if (isLastAttempt) {
@@ -156,11 +170,49 @@ export async function failJob(
         status: "PENDING",
         lastError: error,
         attempts,
-        // Exponential backoff: 1s, 5s, 30s
-        scheduledAt: new Date(Date.now() + [1000, 5000, 30000][Math.min(job.attempts, 2)]),
+        // Exponential backoff: 1s after 1st failure, 5s after 2nd, 30s after 3rd
+        scheduledAt: new Date(Date.now() + RETRY_DELAYS[Math.min(attempts - 1, RETRY_DELAYS.length - 1)]),
       },
     })
   }
+}
+
+/**
+ * Recover jobs left in PROCESSING by a worker that died mid-run.
+ * Jobs whose startedAt is older than the staleness threshold are either
+ * requeued (attempts remaining) or moved to the dead letter queue.
+ * Call this periodically from the worker loop.
+ */
+export async function recoverStaleJobs(staleAfterMinutes = 10): Promise<number> {
+  const cutoff = new Date(Date.now() - staleAfterMinutes * 60 * 1000)
+  const stale = await prisma.job.findMany({
+    where: { status: "PROCESSING", startedAt: { lt: cutoff } },
+    select: { id: true, attempts: true, maxAttempts: true },
+  })
+
+  for (const job of stale) {
+    if (job.attempts >= job.maxAttempts) {
+      await prisma.job.update({
+        where: { id: job.id },
+        data: {
+          status: "DEAD_LETTER",
+          failedAt: new Date(),
+          lastError: "Stale job: worker died mid-processing (recovered)",
+        },
+      })
+    } else {
+      await prisma.job.update({
+        where: { id: job.id },
+        data: {
+          status: "PENDING",
+          scheduledAt: new Date(),
+          lastError: "Stale job: worker died mid-processing (requeued)",
+        },
+      })
+    }
+  }
+
+  return stale.length
 }
 
 export async function getJobStats(clinicId: string) {
