@@ -34,7 +34,7 @@ npx prisma migrate deploy
 
 # 3. Provision non-secret system data (permissions, plans, clinic template).
 # Idempotent, contains no credentials and never creates a demo admin user.
-npx tsx src/seed-system.ts || echo "[boot] System seed failed; continuing boot."
+npx tsx src/seed-system.ts || { echo "[boot] FATAL: system seed failed (see errors above)."; exit 1; }
 
 # 4. Opt-in: bootstrap initial admin account on new database.
 # Only runs when CLINOT_BOOTSTRAP_ADMIN=true and BOOTSTRAP_ADMIN_EMAIL/PASSWORD are set.
@@ -65,7 +65,7 @@ npx tsx src/seed-whatsapp.ts || echo "[boot] WhatsApp provisioning skipped or fa
 # Prefer the self-contained server (static assets copied by scripts/postbuild.js).
 if [ -f .next/standalone/server.js ]; then
   echo "[boot] Starting standalone Next.js server on port ${PORT:-3000}..."
-  exec node .next/standalone/server.js
+  HOSTNAME=0.0.0.0 exec node .next/standalone/server.js
 else
   echo "[boot] No standalone build found - falling back to next start on port ${PORT:-3000}..."
   exec npx next start -p "${PORT:-3000}"

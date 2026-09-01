@@ -27,19 +27,23 @@ const path = require("path")
 
 const rootDir = path.resolve(__dirname, "..")
 
+function stamp() {
+  return new Date().toISOString()
+}
+
 function runCommand(command, description, failOnError = true) {
-  console.log(`[boot] ${description}...`)
+  console.log(`[boot] ${description}... (${stamp()})`)
   try {
     execSync(command, {
       cwd: rootDir,
       stdio: "inherit",
       env: process.env,
     })
-    console.log(`[boot] ✓ ${description} succeeded.`)
+    console.log(`[boot] ✓ ${description} succeeded. (${stamp()})`)
     return true
   } catch (error) {
     if (failOnError) {
-      console.error(`[boot] ✗ ${description} failed:`, error.message)
+      console.error(`[boot] FATAL: ${description} failed:`, error.message)
       throw error
     } else {
       console.warn(`[boot] ! ${description} warning / skipped:`, error.message)
@@ -94,7 +98,9 @@ async function main() {
   runCommand("npx prisma migrate deploy", "Applying database migrations (prisma migrate deploy)", true)
 
   // 3. Provision System Data (Permissions, Plans, Clinic Template)
-  runCommand("npx tsx src/seed-system.ts", "Provisioning system data (permissions, plans, template)", false)
+  // FATAL on failure: roles/permissions are required for login and booking —
+  // starting the web server without them produces a broken deployment.
+  runCommand("npx tsx src/seed-system.ts", "Provisioning system data (permissions, plans, template)", true)
 
   // 4. Opt-in Admin Bootstrap (if CLINOT_BOOTSTRAP_ADMIN=true)
   if (process.env.CLINOT_BOOTSTRAP_ADMIN === "true") {
@@ -140,7 +146,11 @@ async function main() {
   const webProcess = spawn(command, args, {
     cwd: rootDir,
     stdio: "inherit",
-    env: process.env,
+    // Force the bind address to 0.0.0.0: the Next standalone server uses
+    // process.env.HOSTNAME as its bind host, and container platforms often
+    // set HOSTNAME to the container name — which can bind to a non-routable
+    // interface so platform health checks never connect.
+    env: { ...process.env, HOSTNAME: "0.0.0.0" },
     shell: command === "npx",
   })
 
