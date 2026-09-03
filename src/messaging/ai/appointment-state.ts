@@ -3,24 +3,125 @@
  *
  * Persisted as a JSON blob inside Conversation.metadata (the column
  * already exists in the schema). The state machine is deterministic
- * (no LLM call required to advance a turn) and handles all of:
+ * (no LLM call required to advance a turn) and is the SINGLE owner
+ * of `Conversation.metadata.appointmentDraft`. No other code path
+ * writes that field.
  *
- *  - activating a new draft from a booking keyword or symptom
- *  - extracting name / reason / date / time / phone from free-form text
- *  - accepting multi-field input in a single message
- *  - accepting multi-line input (each line may contain a different field)
- *  - falling back to the WhatsApp sender for phone
- *  - clearing on emergency / cancellation / explicit user request
- *  - returning the next prompt and a "ready to book" flag when all
- *    fields are present
+ * CRITICAL PRODUCT CONTRACT (per the production bug audit):
  *
- * The receptionist module calls processTurn() BEFORE the generic AI
- * intent classifier, so an active draft is never overwritten by a
- * free-form user reply.
+ *   Symptoms NEVER activate a draft. Only EXPLICIT booking intent
+ *   activates. After activation, the state machine distinguishes
+ *   "slot answer" from "interruption" via the route classifier in
+ *   `./route-classifier.ts` — this module only handles the slot-
+ *   answer branch.
+ *
+ *   When the receptionist detects an interruption (clinic question,
+ *   symptom question, insurance question, etc.) while a draft is
+ *   active, the draft is preserved unchanged. The expectedField
+ *   field on the draft tells the receptionist which slot to resume
+ *   on the next user message.
+ *
+ * Slot order (cannot be skipped):
+ *   name → phone → reason → date → time
+ *
+ *   The "phone" slot is normally auto-filled from the WhatsApp
+ *   sender the first time the draft is activated. The user is only
+ *   asked for a phone if the WhatsApp sender did not provide one.
  */
+
+import type { Intent } from "../types"
+
+// === Activation triggers (EXPLICIT only) ===================================
+// Symptoms are NOT in this list. "I have a headache" never starts
+// a booking. The user must say "I want to book an appointment" or
+// equivalent.
+const APPOINTMENT_START_PATTERNS: RegExp[] = [
+  // "I want to book an appointment" / "I need to schedule a visit"
+  new RegExp("\\b(i\\s+want|i\\s+need|i\\s+'?d\\s+like|want\\s+to|need\\s+to|let'?s|can\\s+i|could\\s+i|may\\s+i|please|plz)\\s+(to\\s+)?(book|schedule|make(?:\\s+an)?|set(?:\\s+up)?|get)\\b.*\\b(appointment|booking|visit|consult|consultation|checkup|session|slot)\\b", "i"),
+  // "I need an appointment" / "I need a visit"
+  new RegExp("\\b(i\\s+need|i\\s+want|i\\s+'?d\\s+like|need|want)\\s+(a|an|the)\\s+(appointment|visit|consult|consultation|checkup)\\b", "i"),
+  // "I need to come to the clinic" / "I want to see the doctor"
+  new RegExp("\\b(i\\s+need|i\\s+want|i\\s+'?d\\s+like|need|want)\\s+to\\s+(come|see|visit|meet)\\b", "i"),
+  // "book an appointment" / "schedule a visit"
+  new RegExp("\\b(book|schedule|make(?:\\s+an)?|set\\s+up)\\b.*\\b(appointment|booking|visit|consult|consultation|checkup|session|slot)\\b", "i"),
+  // "appointment please" / "appointment now"
+  new RegExp("\\b(appointment|booking|visit|consult|consultation|checkup)\\b.*\\b(please|plz|now|today|tomorrow|book|schedule)\\b", "i"),
+  // "can I book an appointment?"
+  new RegExp("^(can\\s+i|may\\s+i|could\\s+i|do\\s+you\\s+do)\\b.*\\b(appointment|booking|visit|consult|consultation)\\b", "i"),
+  // "see a doctor" / "meet the dentist"
+  new RegExp("\\b(see|meet|visit)\\b.*\\b(doctor|dentist|practitioner|specialist)\\b", "i"),
+  // "schedule me tomorrow" / "book me for tomorrow" / "make me an
+  // appointment"
+  new RegExp("\\b(make\\s+me|book\\s+me|schedule\\s+me|fit\\s+me\\s+in)\\b.*\\b(an?\\s+)?(appointment|slot|visit|next\\s+week|tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\\b", "i"),
+]
+
+export function isAppointmentStart(message: string): boolean {
+  const lower = message.toLowerCase().trim()
+  if (!lower) return false
+  // Length guard: very short messages are unlikely to be a real
+  // booking request. "ok" / "no" / "yes" should not activate.
+  if (lower.length < 5) return false
+  return APPOINTMENT_START_PATTERNS.some((re) => re.test(lower))
+}
+
+// === Cancellation / rescheduling ==========================================
+// These do NOT start a new draft. They are routed to the normal
+// receptionist flow so the existing booking (if any) can be
+// cancelled or rescheduled through the standard clinic tooling.
+const CANCEL_PATTERNS: RegExp[] = [
+  /\b(cancel|cancellation|cancelled|cancelling)\b/i,
+]
+const RESCHEDULE_PATTERNS: RegExp[] = [
+  new RegExp("\\b(i\\s+need\\s+to\\s+reschedule|i\\s+want\\s+to\\s+reschedule|reschedule|re-?schedule)\\b", "i"),
+  new RegExp("\\b(change\\s+my|change\\s+the|move\\s+my|move\\s+the)\\b.*\\b(appointment|booking|visit)\\b", "i"),
+  new RegExp("\\b(can\\s+i\\s+(move|change|reschedule|re-?schedule))\\b", "i"),
+]
+
+export function isCancelIntent(message: string): boolean {
+  const lower = message.toLowerCase().trim()
+  return CANCEL_PATTERNS.some((re) => re.test(lower))
+}
+
+export function isRescheduleIntent(message: string): boolean {
+  const lower = message.toLowerCase().trim()
+  return RESCHEDULE_PATTERNS.some((re) => re.test(lower))
+}
+
+// === Emergency override ==================================================
+// These keywords indicate a life-threatening situation. They take
+// priority over EVERYTHING else, even an in-progress appointment.
+const EMERGENCY_OVERRIDE_KEYWORDS = [
+  "emergency", "urgent care", "can't breathe", "difficulty breathing",
+  "bleeding heavily", "unconscious", "heart attack", "stroke", "chest pain",
+  "severe bleeding", "anaphylaxis", "overdose", "suicide", "self harm",
+  "not breathing", "passed out",
+]
+
+export function isEmergencyOverride(message: string): boolean {
+  const lower = message.toLowerCase()
+  return EMERGENCY_OVERRIDE_KEYWORDS.some((kw) => lower.includes(kw))
+}
+
+// === Explicit "I changed my mind" cancellation of the booking flow ====
+
+const FLOW_CANCEL_PATTERNS = [
+  /^(never\s*mind|forget\s+it|forget\s+that|nvm|stop|cancel)$/i,
+  /^(don'?t\s+book|nevermind|please\s+stop)$/i,
+]
+
+export function isFlowCancel(message: string): boolean {
+  const lower = message.toLowerCase().trim()
+  return FLOW_CANCEL_PATTERNS.some((re) => re.test(lower))
+}
+
+// === Draft schema =========================================================
+
+export type ExpectedField = "name" | "phone" | "reason" | "date" | "time" | null
 
 export type AppointmentDraft = {
   active: boolean
+  status: "collecting" | "ready" | "booking" | "completed" | "cancelled"
+  expectedField: ExpectedField
   activatedAt?: string
   updatedAt?: string
   patientName?: string
@@ -30,103 +131,37 @@ export type AppointmentDraft = {
   preferredTime?: string // HH:MM 24h
   providerId?: string
   providerName?: string
-  history: Array<{ field: string; value: string; source: "user" | "whatsapp" }>
+  history: Array<{ field: string; value: string; source: "user" | "whatsapp" | "auto" | "user_correction" }>
   clearedReason?: string
 }
 
-export const EMPTY_DRAFT: AppointmentDraft = { active: false, history: [] }
-
-export const APPOINTMENT_TRIGGER_KEYWORDS = [
-  "appointment", "book", "schedule", "reschedule", "cancel my appointment",
-  "need to see a doctor", "when can i come in", "availability",
-  "available", "booking", "visit", "see a doctor", "see the doctor",
-  "checkup", "cleaning", "consult", "consultation",
-]
-
-// Symptoms / health complaints that should activate appointment intent.
-// These are not strictly "book" but clearly indicate the patient
-// wants clinical help and the appropriate response is to offer /
-// collect booking info.
-export const SYMPTOM_TRIGGERS = [
-  "headache", "toothache", "tooth hurts", "my tooth", "tooth pain",
-  "pain", "hurt", "sore", "ache",
-  "fever", "cough", "cold", "flu",
-  "bleeding", "swelling", "swell",
-  "dizzy", "nausea", "vomit",
-  "back pain", "neck pain", "ear pain", "sore throat",
-  "check", "checkup", "look at", "take a look",
-]
-
-// Emergency keywords — if any of these appear in the current message
-// we clear the active draft and return the emergency response, even
-// mid-flow.
-export const EMERGENCY_OVERRIDE_KEYWORDS = [
-  "emergency", "urgent", "severe pain", "can't breathe", "difficulty breathing",
-  "bleeding heavily", "unconscious", "heart attack", "stroke", "chest pain",
-  "allergic reaction", "anaphylaxis", "overdose", "suicide", "self harm",
-]
-
-// We do NOT trigger on "headache" alone at the global level — only at
-// the receptionist level when an active draft exists, so the user is
-// not aggressively pushed toward booking on casual mentions. The
-// keyword list is intentionally conservative: pain, sore, hurt, etc.
-// alongside active draft is a strong signal of intent.
-
-const MONTHS: Record<string, number> = {
-  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3,
-  apr: 4, april: 4, may: 5, jun: 6, june: 6, jul: 7, july: 7,
-  aug: 8, august: 8, sep: 9, sept: 9, september: 9,
-  oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
+export const EMPTY_DRAFT: AppointmentDraft = {
+  active: false,
+  status: "collecting",
+  expectedField: null,
+  history: [],
 }
 
-const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
-const DAY_ABBR = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+// === Public API ==========================================================
 
 /**
- * Detect whether a user message should START a new appointment draft.
- * The receptionist calls this on the raw message BEFORE the generic
- * intent classifier, so a booking intent is never lost to a later
- * "general_question" classification.
- */
-export function isAppointmentTrigger(message: string): boolean {
-  const lower = message.toLowerCase()
-  return APPOINTMENT_TRIGGER_KEYWORDS.some((kw) => lower.includes(kw))
-}
-
-export function isSymptomTrigger(message: string): boolean {
-  const lower = message.toLowerCase()
-  return SYMPTOM_TRIGGERS.some((kw) => lower.includes(kw))
-}
-
-export function isEmergencyOverride(message: string): boolean {
-  const lower = message.toLowerCase()
-  return EMERGENCY_OVERRIDE_KEYWORDS.some((kw) => lower.includes(kw))
-}
-
-/**
- * Process one turn of the appointment flow.
+ * Pure function. Decide what to do with one incoming message given
+ * the current draft. Returns the updated draft, the next prompt to
+ * send (if the receptionist should respond deterministically), and
+ * a "complete" flag.
  *
- * Inputs:
- *   - existingDraft: the draft currently in Conversation.metadata, or null
- *   - message: the raw user message (may be multi-line)
- *   - whatsappFrom: the sender info (used for phone fallback)
- *   - now: current Date (for relative-time resolution)
+ * IMPORTANT: this function does NOT activate a draft. Activation
+ * is the route classifier's job (route-classifier.ts). The state
+ * machine is invoked only AFTER the route classifier has decided
+ * the message is a slot answer for the active draft.
  *
- * Returns:
- *   - draft: the new draft (after this turn's updates)
- *   - nextPrompt: a string the receptionist should send to the patient
- *     ("Thanks, Akarshit. What is the reason..."). If draft.active=false
- *     and no activation happened, nextPrompt is null and the caller
- *     should fall back to normal intent handling.
- *   - isComplete: true when all required fields (name, phone, reason,
- *     preferredDate, preferredTime) are present. The receptionist can
- *     then proceed to book_appointment.
- *   - shouldClear: true when the user explicitly cancels or changes
- *     topic. The receptionist should clear Conversation.metadata and
- *     fall through to normal handling.
+ * If the message cannot plausibly answer the currently expected
+ * field, the state machine should NOT be called — the route
+ * classifier routes the message to the normal receptionist and
+ * the draft is preserved unchanged.
  */
-export function processTurn(
-  existingDraft: AppointmentDraft | null,
+export function processSlotAnswer(
+  existingDraft: AppointmentDraft,
   message: string,
   whatsappFrom: { id: string; phone?: string; name?: string },
   now: Date = new Date(),
@@ -134,117 +169,124 @@ export function processTurn(
   draft: AppointmentDraft
   nextPrompt: string | null
   isComplete: boolean
-  shouldClear: boolean
 } {
-  // Emergency override — clear any active draft and let the caller
-  // emit the emergency response.
-  if (isEmergencyOverride(message)) {
+  // Defensive: only process if the draft is active. The caller
+  // (receptionist) is responsible for the activation decision.
+  if (!existingDraft.active) {
     return {
-      draft: { ...EMPTY_DRAFT, history: [] },
+      draft: existingDraft,
       nextPrompt: null,
       isComplete: false,
-      shouldClear: true,
     }
   }
 
-  // Explicit cancellation from the user (in any phrasing).
-  const lower = message.toLowerCase().trim()
-  if (
-    existingDraft?.active &&
-    /^(never ?mind|forget (it|that)|cancel|stop|don'?t (book|need)|no (thanks|thank you))$/i.test(lower)
-  ) {
-    return {
-      draft: { ...EMPTY_DRAFT, clearedReason: "user_cancelled", history: [] },
-      nextPrompt: null,
-      isComplete: false,
-      shouldClear: true,
-    }
+  const draft: AppointmentDraft = {
+    ...existingDraft,
+    history: [...existingDraft.history],
   }
 
-  const draft: AppointmentDraft = existingDraft
-    ? { ...existingDraft, history: [...existingDraft.history] }
-    : { ...EMPTY_DRAFT, history: [] }
+  const extracted = extractAllFields(message, now)
 
-  // Activate if not yet active AND the message is a trigger.
-  if (!draft.active) {
-    if (isAppointmentTrigger(message) || isSymptomTrigger(message)) {
-      draft.active = true
-      draft.activatedAt = now.toISOString()
-    } else {
-      // No active draft, no trigger → caller falls through to normal
-      // intent handling (greeting, FAQ, etc.).
-      return {
-        draft: existingDraft || { ...EMPTY_DRAFT, history: [] },
-        nextPrompt: null,
-        isComplete: false,
-        shouldClear: false,
+  // Always apply extracted values into the draft, BUT only into
+  // fields the receptionist has explicitly asked for (the
+  // expectedField), to keep the slot-interpretation contextual.
+  //
+  // For the CURRENT expected field, apply normally.
+  // For OTHER fields, the user may have volunteered them in this
+  // message — capture them too, but they don't change what we
+  // ask next. This is what the brief's test C2 ("All four fields
+  // in one multi-line message") requires.
+  if (extracted.name) {
+    if (!draft.patientName || draft.expectedField === "name") {
+      draft.patientName = extracted.name
+      draft.history.push({ field: "patientName", value: extracted.name, source: "user" })
+    }
+  }
+  if (extracted.phone) {
+    if (!draft.patientPhone || draft.expectedField === "phone") {
+      if (draft.patientPhone !== extracted.phone) {
+        draft.patientPhone = extracted.phone
+        draft.history.push({ field: "patientPhone", value: extracted.phone, source: "user" })
       }
     }
   }
-
-  // From here, draft.active is true. Extract fields from the message.
-  // The message may contain multiple fields at once. We run all
-  // extractors in a single pass.
-  const extracted = extractAllFields(message, now)
-
-  // Apply extracted fields. An explicit user-provided value ALWAYS
-  // wins over a previously-set WhatsApp fallback — the patient is
-  // not held hostage to a phone number we inferred before they had
-  // a chance to type their own. For all other fields, the
-  // "already set" check applies so the patient is never asked to
-  // repeat themselves.
-  if (extracted.name && !draft.patientName) {
-    draft.patientName = extracted.name
-    draft.history.push({ field: "patientName", value: extracted.name, source: "user" })
-  }
-  if (extracted.reason && !draft.reason) {
-    draft.reason = extracted.reason
-    draft.history.push({ field: "reason", value: extracted.reason, source: "user" })
-  }
-  if (extracted.preferredDate && !draft.preferredDate) {
-    draft.preferredDate = extracted.preferredDate
-    draft.history.push({ field: "preferredDate", value: extracted.preferredDate, source: "user" })
-  }
-  if (extracted.preferredTime && !draft.preferredTime) {
-    draft.preferredTime = extracted.preferredTime
-    draft.history.push({ field: "preferredTime", value: extracted.preferredTime, source: "user" })
-  }
-
-  // Phone: explicit user value ALWAYS wins, even if a prior turn's
-  // WhatsApp fallback was already in place. The patient is not
-  // locked into a number we inferred. The WhatsApp fallback is only
-  // used as a last resort when nothing else is set.
-  if (extracted.phone) {
-    if (draft.patientPhone !== extracted.phone) {
-      draft.patientPhone = extracted.phone
-      draft.history.push({ field: "patientPhone", value: extracted.phone, source: "user" })
+  if (extracted.reason) {
+    if (!draft.reason || draft.expectedField === "reason") {
+      draft.reason = extracted.reason
+      draft.history.push({ field: "reason", value: extracted.reason, source: "user" })
     }
-  } else if (!draft.patientPhone && whatsappFrom.phone) {
+  }
+  if (extracted.preferredDate) {
+    if (!draft.preferredDate || draft.expectedField === "date") {
+      draft.preferredDate = extracted.preferredDate
+      draft.history.push({ field: "preferredDate", value: extracted.preferredDate, source: "user" })
+    }
+  }
+  if (extracted.preferredTime) {
+    if (!draft.preferredTime || draft.expectedField === "time") {
+      draft.preferredTime = extracted.preferredTime
+      draft.history.push({ field: "preferredTime", value: extracted.preferredTime, source: "user" })
+    }
+  }
+
+  // Phone fallback: if still unset, take the WhatsApp sender.
+  // User-provided values always win (handled above).
+  if (!draft.patientPhone && whatsappFrom.phone) {
     draft.patientPhone = whatsappFrom.phone
     draft.history.push({ field: "patientPhone", value: whatsappFrom.phone, source: "whatsapp" })
   }
 
+  // Phone correction: a message like "my number is ..." or "phone
+  // is ..." ALWAYS overrides the existing phone, even if the
+  // expectedField is not "phone" and even if a whatsapp fallback
+  // is already set. This handles the case where the user wants to
+  // use a different number than the WhatsApp sender.
+  if (extracted.phone && /\b(my\s+(phone|number|cell|mobile)\s+is|phone\s+is|actually\s+my\s+number)\b/i.test(message)) {
+    if (draft.patientPhone !== extracted.phone) {
+      draft.patientPhone = extracted.phone
+      draft.history.push({ field: "patientPhone", value: extracted.phone, source: "user_correction" })
+    }
+  }
+
+  // Name correction: a message like "actually my name is ..." or
+  // "my name is ..." ALWAYS overrides the existing name, even if
+  // the expectedField is not "name". The name is extracted from
+  // the text AFTER the introducer phrase.
+  if (/\b(actually\s+my\s+name\s+is|my\s+name\s+is|i\s+am|i'm)\b/i.test(message)) {
+    const stripped = message
+      .replace(/.*?\b(actually\s+my\s+name\s+is|my\s+name\s+is|i\s+am|i'm)\b\s*/i, "")
+      .trim()
+    const correctedName = extractName(stripped)
+    if (correctedName && draft.patientName !== correctedName) {
+      draft.patientName = correctedName
+      draft.history.push({ field: "patientName", value: correctedName, source: "user_correction" })
+    }
+  }
+
+  // Recompute the next missing field.
+  draft.expectedField = nextMissingField(draft)
+  draft.status = draft.expectedField ? "collecting" : "ready"
   draft.updatedAt = now.toISOString()
 
-  // Decide what to ask next.
-  const missing: string[] = []
-  if (!draft.patientName) missing.push("name")
-  if (!draft.patientPhone) missing.push("phone")
-  if (!draft.reason) missing.push("reason")
-  if (!draft.preferredDate) missing.push("date")
-  if (!draft.preferredTime) missing.push("time")
-
-  const isComplete = missing.length === 0
-  const nextPrompt = isComplete
-    ? null
-    : buildNextPrompt(draft, missing)
-
-  return { draft, nextPrompt, isComplete, shouldClear: false }
+  return {
+    draft,
+    nextPrompt: draft.expectedField ? buildPrompt(draft, draft.expectedField) : null,
+    isComplete: draft.expectedField === null,
+  }
 }
 
-function buildNextPrompt(draft: AppointmentDraft, missing: string[]): string {
-  // Friendly, field-specific prompts. Keep them short and natural.
-  const field = missing[0]
+export function nextMissingField(draft: AppointmentDraft): ExpectedField {
+  if (!draft.patientName) return "name"
+  if (!draft.patientPhone) return "phone"
+  if (!draft.reason) return "reason"
+  if (!draft.preferredDate) return "date"
+  if (!draft.preferredTime) return "time"
+  return null
+}
+
+function buildPrompt(draft: AppointmentDraft, field: ExpectedField): string {
+  if (field === null) return ""
+  const firstName = draft.patientName?.split(/\s+/)[0]
   switch (field) {
     case "name":
       return "Sure, I can help you book an appointment. What's your full name?"
@@ -252,15 +294,40 @@ function buildNextPrompt(draft: AppointmentDraft, missing: string[]): string {
       // We only ask for phone if WhatsApp did not provide one (rare).
       return "Thanks! What phone number should we use to confirm the appointment?"
     case "reason":
-      return `Thanks${draft.patientName ? `, ${draft.patientName.split(/\s+/)[0]}` : ""}. What is the reason for your visit?`
+      return `Thanks${firstName ? `, ${firstName}` : ""}. What is the reason for your visit?`
     case "date":
       return "Got it. What date would you prefer? You can say 'tomorrow', 'next Monday', or a specific date like 'October 5'."
     case "time":
       return "What time works for you? For example, '4 PM', 'morning', or 'afternoon'."
-    default:
-      return "Could you provide a bit more detail so I can help you book the appointment?"
   }
 }
+
+/**
+ * Create a fresh draft in response to a confirmed APPOINTMENT_START
+ * signal from the route classifier. Returns the new draft ready to
+ * be persisted.
+ */
+export function createFreshDraft(now: Date = new Date()): AppointmentDraft {
+  return {
+    ...EMPTY_DRAFT,
+    active: true,
+    status: "collecting",
+    expectedField: "name",
+    activatedAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+    history: [{ field: "_activated", value: now.toISOString(), source: "auto" }],
+  }
+}
+
+export function clearDraft(reason: string): AppointmentDraft {
+  return {
+    ...EMPTY_DRAFT,
+    clearedReason: reason,
+    history: [],
+  }
+}
+
+// === Field extractors =====================================================
 
 interface ExtractedFields {
   name?: string
@@ -270,71 +337,38 @@ interface ExtractedFields {
   preferredTime?: string
 }
 
-/**
- * Extract appointment-relevant fields from a free-form message.
- *
- * The extractor is deliberately permissive: it captures anything that
- * looks like a name, a phone number, a date, or a time, and leaves
- * the rest to the reason extractor. This is the deterministic
- * counterpart to the AI-based extraction the brief warned against
- * relying on alone — the state machine must work even when the AI
- * returns "I don't understand".
- */
 export function extractAllFields(message: string, now: Date = new Date()): ExtractedFields {
   const out: ExtractedFields = {}
 
-  // Split on BOTH newlines AND commas so multi-field single-line
-  // messages like "Akarshit, I have a headache" are handled the same
-  // way as multi-line messages. The order of fields in the user's
-  // message is preserved (we walk segments in order).
+  // Split on newlines and commas (single-line multi-field messages).
   const segments = message
     .split(/[\r\n,;]+/)
     .map((s) => s.trim())
     .filter(Boolean)
 
-  for (const line of segments) {
-    // Skip segments that are clearly trigger phrases (e.g. "book
-    // appointment") so they are not mis-classified as a name.
-    if (isAppointmentTrigger(line)) continue
+  for (const seg of segments) {
+    if (isAppointmentStart(seg)) continue
 
-    // 1) Phone number? (digits, possibly with spaces, dashes, parens,
-    //    optional +).
     if (!out.phone) {
-      const phone = extractPhone(line)
+      const phone = extractPhone(seg)
       if (phone) out.phone = phone
     }
-
-    // Date and time can co-exist in the same segment
-    // ("tomorrow at 4 PM"). Extract BOTH before continuing, because
-    // if we extracted time first and the segment was "tomorrow at
-    // 4 PM" the segment would be consumed and the date lost.
     if (!out.preferredDate) {
-      const date = extractDate(line, now)
+      const date = extractDate(seg, now)
       if (date) out.preferredDate = date
     }
     if (!out.preferredTime) {
-      const time = extractTime(line)
+      const time = extractTime(seg)
       if (time) out.preferredTime = time
     }
-    if (out.phone || out.preferredDate || out.preferredTime) {
-      // We found a structured field in this segment. The segment is
-      // not a name. Move on.
-      continue
-    }
+    if (out.phone || out.preferredDate || out.preferredTime) continue
 
-    // 2) Name? (a line of 2-4 words that look like a person's name —
-    //    capitalized first letter, no digits, not a stopword).
     if (!out.name) {
-      const name = extractName(line)
+      const name = extractName(seg)
       if (name) out.name = name
     }
   }
 
-  // If reason not yet set, anything that looks like a health
-  // complaint is a reason. We accept the full original message
-  // (minus anything we already classified) as the reason, so a
-  // single-line "I have a headache" sets reason without losing
-  // information.
   if (!out.reason) {
     out.reason = extractReason(message, out)
   }
@@ -342,25 +376,28 @@ export function extractAllFields(message: string, now: Date = new Date()): Extra
   return out
 }
 
-function extractPhone(line: string): string | undefined {
-  // Strip everything except digits, then validate length.
+export function extractPhone(line: string): string | undefined {
   const digits = line.replace(/[^\d]/g, "")
   if (digits.length < 7 || digits.length > 15) return undefined
-  // Only treat as phone if the line is mostly digits / phone punctuation.
+  // Two ways a line can be a phone:
+  //   1. Mostly digits / phone punctuation: "8700879401",
+  //      "+1 555 000 1111", "(555) 000-1111"
+  //   2. Contains a phone-introducer phrase ("my number is",
+  //      "phone is", "call me at", "my phone is") followed by digits
   const phonePunct = line.replace(/[+\d\s\-().]/g, "")
-  if (phonePunct.trim().length > 2) return undefined
-  return digits
+  if (phonePunct.trim().length <= 2) return digits
+  if (/\b(my\s+(phone|number|cell|mobile)\s+is|phone\s+is|actually\s+my\s+number|call\s+me\s+at|reach\s+me\s+at)\b/i.test(line)) {
+    return digits
+  }
+  return undefined
 }
 
-function extractTime(line: string): string | undefined {
+export function extractTime(line: string): string | undefined {
   const lower = line.toLowerCase().trim()
-
-  // "morning" / "afternoon" / "evening" — map to representative hours.
   if (/^morning$/.test(lower)) return "09:00"
   if (/^afternoon$/.test(lower)) return "14:00"
   if (/^evening$/.test(lower)) return "17:30"
 
-  // "4 PM", "4pm", "4:00 PM", "16:00", "4 p.m."
   const m = lower.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\b/)
   if (m) {
     let h = parseInt(m[1], 10)
@@ -375,36 +412,33 @@ function extractTime(line: string): string | undefined {
     return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`
   }
 
-  // Bare 24h "16:00".
   const m24 = line.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/)
-  if (m24) {
-    return `${m24[1].padStart(2, "0")}:${m24[2]}`
-  }
+  if (m24) return `${m24[1].padStart(2, "0")}:${m24[2]}`
 
   return undefined
 }
 
-function extractDate(line: string, now: Date): string | undefined {
-  const lower = line.toLowerCase().trim()
+const MONTHS: Record<string, number> = {
+  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3,
+  apr: 4, april: 4, may: 5, jun: 6, june: 6, jul: 7, july: 7,
+  aug: 8, august: 8, sep: 9, sept: 9, september: 9,
+  oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
+}
+const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
 
-  // Relative terms. Accept the term anywhere in the segment
-  // ("tomorrow at 4 PM" should still match), but only as a whole
-  // word so "tomorrowish" does not accidentally match.
+export function extractDate(line: string, now: Date): string | undefined {
+  const lower = line.toLowerCase().trim()
   if (/\btoday\b/.test(lower)) return isoDate(now)
   if (/\btomorrow\b/.test(lower)) return isoDate(addDays(now, 1))
   if (/\bday\s+after\s+tomorrow\b/.test(lower)) return isoDate(addDays(now, 2))
 
-  // "next Monday" / "this Friday" / "on Monday".
-  const dayMatch = lower.match(/\b(?:(next|this|on)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|wed|thu|fri|sat)\b/)
+  const dayMatch = lower.match(/\b(?:(next|this|on)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/)
   if (dayMatch) {
     const wantNext = dayMatch[1] === "next"
     const idx = DAY_NAMES.indexOf(dayMatch[2])
-    if (idx >= 0) {
-      return isoDate(nextWeekday(now, idx, wantNext))
-    }
+    if (idx >= 0) return isoDate(nextWeekday(now, idx, wantNext))
   }
 
-  // "Oct 5" / "October 5" / "5 Oct" / "5 October"
   const monthDay = lower.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:[,\s]+(\d{4}))?\b/)
   if (monthDay) {
     const month = MONTHS[monthDay[1].slice(0, 3)]
@@ -421,73 +455,56 @@ function extractDate(line: string, now: Date): string | undefined {
     return isoDate(new Date(year, (month || 1) - 1, day))
   }
 
-  // Numeric: "10/5/2026" or "10-5-2026" or "10/5".
   const numeric = lower.match(/\b(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\b/)
   if (numeric) {
     const a = parseInt(numeric[1], 10)
     const b = parseInt(numeric[2], 10)
     const year = numeric[3] ? parseInt(numeric[3], 10) : now.getFullYear()
-    // Assume US ordering: first is month, second is day.
-    if (a >= 1 && a <= 12 && b >= 1 && b <= 31) {
-      return isoDate(new Date(year, a - 1, b))
-    }
+    if (a >= 1 && a <= 12 && b >= 1 && b <= 31) return isoDate(new Date(year, a - 1, b))
   }
 
   return undefined
 }
 
-function extractName(line: string): string | undefined {
+export function extractName(line: string): string | undefined {
   const trimmed = line.trim()
   if (trimmed.length < 2 || trimmed.length > 80) return undefined
-  // Reject lines that are obviously something else.
   if (/[!?]/.test(trimmed)) return undefined
   if (/\d/.test(trimmed)) return undefined
-  // A "name" is 1-5 words, each starting with a letter, no digits, no
-  // stopwords-only lines. Allow apostrophes, hyphens, dots.
   const words = trimmed.split(/\s+/)
   if (words.length < 1 || words.length > 5) return undefined
   const nameShape = /^[A-Za-z][A-Za-z'\-.]{1,30}$/
   if (!words.every((w) => nameShape.test(w))) return undefined
-  // At least one word must be 2+ characters (skip single-letter
-  // artifacts like "a").
   if (!words.some((w) => w.length >= 2)) return undefined
-  // Reject if every word is in the non-name vocabulary, or if the
-  // line is a known health-symptom term. Both classes would be
-  // misclassified as a person's name otherwise ("headache" would
-  // become "Headache").
   const nonNameWords = [
     "book", "appointment", "schedule", "reschedule", "visit", "see",
     "doctor", "checkup", "consultation", "consult", "i", "want", "need",
     "to", "the", "a", "an", "my", "for", "with", "please", "thanks",
-    "thank", "you", "hi", "hello", "hey",
+    "thank", "you", "hi", "hello", "hey", "where", "what", "when",
+    "how", "is", "are", "do", "does", "did", "can", "could", "would",
+    "will", "shall", "may", "might", "must", "should",
+    "tomorrow", "today", "yesterday", "morning", "afternoon", "evening",
+    "pain", "hurt", "sore", "ache", "fever", "headache", "toothache",
+    "name", "phone", "number", "address", "clinic", "dentist",
+    "this", "that", "these", "those", "was", "were", "be", "been",
   ]
-  const lowered = words.map((w) => w.toLowerCase())
-  if (lowered.every((w) => nonNameWords.includes(w))) return undefined
-  if (lowered.every((w) => SYMPTOM_TRIGGERS.includes(w))) return undefined
-  // Capitalize first letter of each word for tidy display.
-  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ")
+  // Strip out non-name words. "My Name Is Akarshit" → "Akarshit".
+  const nameWords = words.filter((w) => !nonNameWords.includes(w.toLowerCase()))
+  if (nameWords.length === 0) return undefined
+  if (!nameWords.some((w) => w.length >= 2)) return undefined
+  return nameWords.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ")
 }
 
 function extractReason(message: string, alreadyExtracted?: ExtractedFields): string | undefined {
-  // Reason is the leftover text after removing explicit name / phone /
-  // time / date tokens. We keep the original phrasing because the
-  // user often writes the reason in their own words ("I have a
-  // headache", "my tooth hurts", "need a checkup").
   const extracted = alreadyExtracted || {}
-
-  // The reason can contain commas (it's free text), so split on
-  // whitespace, newlines, and semicolons — but NOT on commas.
   const segments = message
     .split(/[\r\n;]+/)
     .flatMap((line) => line.split(/,(?=\s)/))
     .map((s) => s.trim())
     .filter(Boolean)
-
   const reasonParts: string[] = []
   for (const seg of segments) {
-    // Strip leading tokens that are clearly not part of the reason:
-    // trigger phrases, an extracted phone, time, or date.
-    if (isAppointmentTrigger(seg)) continue
+    if (isAppointmentStart(seg)) continue
     if (extractPhone(seg)) continue
     if (extractTime(seg)) continue
     if (extractDate(seg, new Date())) continue
@@ -497,14 +514,10 @@ function extractReason(message: string, alreadyExtracted?: ExtractedFields): str
     }
     reasonParts.push(seg)
   }
-
   const cleaned = reasonParts.join(", ").replace(/\s+/g, " ").trim()
   if (!cleaned) return undefined
-  // Strip a leading comma or dash that may be left after removing the
-  // name token from "Akarshit, I have a headache" → " I have a headache".
   const finalClean = cleaned.replace(/^[,\-\s]+/, "").trim()
   if (!finalClean) return undefined
-  // Cap reason length to keep DB rows small.
   return finalClean.length > 200 ? finalClean.slice(0, 200) : finalClean
 }
 
@@ -522,17 +535,14 @@ function addDays(d: Date, n: number): Date {
 }
 
 function nextWeekday(now: Date, target: number, wantNext: boolean): Date {
-  // target: 0=Sun, 1=Mon, ..., 6=Sat (matches Date.getDay()).
   const current = now.getDay()
   let diff = (target - current + 7) % 7
-  if (diff === 0) diff = 7 // "next Monday" means at least 7 days away
-  if (wantNext) {
-    if (diff < 7) diff += 7
-  }
+  if (diff === 0) diff = 7
+  if (wantNext && diff < 7) diff += 7
   return addDays(now, diff)
 }
 
-// === Public helpers for the receptionist / pipeline ===
+// === Persistence helpers ==================================================
 
 export function readDraftFromMetadata(metadata: string | null | undefined): AppointmentDraft | null {
   if (!metadata) return null
@@ -540,10 +550,18 @@ export function readDraftFromMetadata(metadata: string | null | undefined): Appo
     const parsed = JSON.parse(metadata)
     if (parsed && typeof parsed === "object" && "appointmentDraft" in parsed) {
       const d = (parsed as { appointmentDraft?: AppointmentDraft }).appointmentDraft
-      if (d && d.active) return d
+      if (d && d.active) {
+        // Defensive: ensure the loaded draft has the required shape.
+        return {
+          ...EMPTY_DRAFT,
+          ...d,
+          history: Array.isArray(d.history) ? d.history : [],
+        }
+      }
     }
   } catch {
-    // ignore malformed JSON
+    // Malformed JSON — treat as no draft. The receptionist will
+    // start fresh on the next activation signal.
   }
   return null
 }
@@ -552,19 +570,27 @@ export function writeDraftToMetadata(
   metadata: string | null | undefined,
   draft: AppointmentDraft,
 ): string {
+  // CRITICAL: This function is the SINGLE owner of the
+  // `appointmentDraft` field. Other code MUST NOT write
+  // `metadata` directly; instead they should call
+  // `mergeConversationMetadata` to safely combine their updates
+  // with the appointment draft.
   let base: Record<string, unknown> = {}
   if (metadata) {
     try {
       const parsed = JSON.parse(metadata)
-      if (parsed && typeof parsed === "object") base = parsed as Record<string, unknown>
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        base = parsed as Record<string, unknown>
+      }
     } catch {
-      // overwrite corrupt metadata rather than crash
+      // Malformed metadata — overwrite rather than crash. The draft
+      // is the new source of truth.
     }
   }
   if (!draft.active) {
-    delete (base as any).appointmentDraft
+    delete base.appointmentDraft
   } else {
-    (base as any).appointmentDraft = draft
+    base.appointmentDraft = draft
   }
   return JSON.stringify(base)
 }

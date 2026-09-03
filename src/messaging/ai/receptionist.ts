@@ -1,16 +1,40 @@
+/**
+ * Receptionist — the SINGLE authoritative router for incoming
+ * WhatsApp messages.
+ *
+ * Routing priority (highest first):
+ *
+ *   1. EMERGENCY                       — life-safety override
+ *   2. APPOINTMENT_START               — explicit booking intent
+ *   3. APPOINTMENT_SLOT_ANSWER         — active draft + slot answer
+ *   4. APPOINTMENT_INTERRUPTION        — active draft + non-slot
+ *                                         question; preserve draft
+ *   5. CANCEL_INTENT                    — go to normal flow
+ *   6. RESCHEDULE_INTENT                — go to normal flow
+ *   7. CLINIC_INFORMATION              — location, hours, services
+ *   8. INSURANCE                        — insurance questions
+ *   9. MEDICAL_SYMPTOM                  — symptom, no booking
+ *  10. GENERAL                          — greetings, FAQ, fallback
+ *
+ * The receptionist is the ONLY writer of
+ * `Conversation.metadata.appointmentDraft`. The pipeline's
+ * `prisma.conversation.update` no longer touches `metadata`.
+ */
+
 import { prisma } from "@/lib/db"
-import { generateAIResponseWithTools } from "@/lib/ai"
+import { generateAIResponseWithTools, generateAIResponse } from "@/lib/ai"
 import { detectIntent } from "./intent"
 import {
-  processTurn,
+  processSlotAnswer,
   readDraftFromMetadata,
   writeDraftToMetadata,
-  isAppointmentTrigger,
-  isSymptomTrigger,
+  createFreshDraft,
+  clearDraft,
   isDraftReady,
   isEmergencyOverride,
   type AppointmentDraft,
 } from "./appointment-state"
+import { classifyRoute, logRouteDecision, type Route } from "./route-classifier"
 import { logger } from "@/lib/logger"
 import type { Intent, IncomingMessage, PipelineContext } from "../types"
 import type { ChatMessage } from "@/types"
@@ -20,20 +44,20 @@ export async function runAiReceptionist(
   message: IncomingMessage,
   conversationHistory: ChatMessage[] = [],
 ): Promise<{ response: string; intent: Intent; confidence: number; requiresClinic: boolean }> {
-  const { intent, confidence: intentConfidence } = detectIntent(message.content)
+  const existingDraft = readDraftFromMetadata(context.conversation.metadata)
+  const decision = classifyRoute(message.content, existingDraft)
+  logRouteDecision(decision, context.conversation.id, context.clinicId)
 
   // ========================================================================
-  // 1) EMERGENCY OVERRIDE
-  //    The user's message contains emergency keywords — respond with the
-  //    emergency message and clear any active appointment state. This
-  //    runs BEFORE the appointment state machine so an emergency
-  //    keyword in the middle of "akarshit, 4pm, severe pain" still
-  //    triggers the safety response.
+  // LEVEL 1: EMERGENCY
   // ========================================================================
-  if (intent === "emergency" || isEmergencyOverride(message.content)) {
-    logger.info("[AI-RECEPTIONIST] Emergency intent — returning emergency response", {
+  if (decision.route === "EMERGENCY") {
+    // Preserve the draft (we do not destroy it) but route to the
+    // emergency response.
+    logger.info("[RECEPTIONIST] Emergency — returning emergency response", {
       conversationId: context.conversation.id,
       clinicId: context.clinicId,
+      hadActiveDraft: Boolean(existingDraft?.active),
     })
     return {
       response: buildEmergencyResponse(context.clinic),
@@ -44,58 +68,67 @@ export async function runAiReceptionist(
   }
 
   // ========================================================================
-  // 2) APPOINTMENT STATE MACHINE
-  //    Load any existing draft from Conversation.metadata. If a draft
-  //    is already active, the current message is treated as a turn in
-  //    the appointment flow even if the user did NOT say "book" again.
-  //    The state machine is deterministic — it does not require an LLM
-  //    call to advance.
+  // LEVEL 2: APPOINTMENT_START
+  //   The user has EXPLICITLY asked to book. Activate a fresh draft.
   // ========================================================================
-  const existingDraft = readDraftFromMetadata(context.conversation.metadata)
-  const turn = processTurn(
-    existingDraft,
-    message.content,
-    { id: message.from.id, phone: message.from.phone, name: message.from.name },
-  )
-
-  if (turn.shouldClear) {
-    // User explicitly cancelled mid-flow, or emergency override. The
-    // pipeline below will persist the cleared draft.
+  if (decision.route === "APPOINTMENT_START") {
+    const draft = createFreshDraft()
     await prisma.conversation.update({
       where: { id: context.conversation.id },
       data: {
-        metadata: writeDraftToMetadata(context.conversation.metadata, turn.draft),
-        // If the user is just talking, do not require clinic.
-        intent: "general_question",
+        metadata: writeDraftToMetadata(context.conversation.metadata, draft),
+        intent: "appointment",
         isEmergency: false,
+        status: "active",
+        summary: message.content.slice(0, 200),
       },
     })
-    // Fall through to normal intent handling for this turn.
-  } else if (turn.draft.active) {
-    // The state machine produced a draft. Persist it now so the next
-    // turn (or worker restart) sees the same state.
-    const nextPrompt = turn.nextPrompt
-    const ready = turn.isComplete
+    // Auto-fill phone from the WhatsApp sender if available.
+    const autoPhone = message.from.phone
+    if (autoPhone && !draft.patientPhone) {
+      draft.patientPhone = autoPhone
+      draft.history.push({ field: "patientPhone", value: autoPhone, source: "whatsapp" })
+    }
+    // The first prompt is always the name.
+    return {
+      response: "Sure, I can help you book an appointment. What's your full name?",
+      intent: "appointment",
+      confidence: 0.95,
+      requiresClinic: false,
+    }
+  }
 
-    logger.info("[APPOINTMENT-FLOW] Active draft updated", {
+  // ========================================================================
+  // LEVEL 3: APPOINTMENT_SLOT_ANSWER
+  //   Active draft + message plausibly answers the expected slot.
+  //   Feed the message to the state machine.
+  // ========================================================================
+  if (decision.route === "APPOINTMENT_SLOT_ANSWER" && existingDraft && existingDraft.active) {
+    const turn = processSlotAnswer(
+      existingDraft,
+      message.content,
+      { id: message.from.id, phone: message.from.phone, name: message.from.name },
+    )
+
+    logger.info("[APPOINTMENT-FLOW] Slot answer processed", {
       conversationId: context.conversation.id,
       clinicId: context.clinicId,
-      ready,
+      filledField: decision.expectedField,
+      ready: turn.isComplete,
       hasName: Boolean(turn.draft.patientName),
       hasPhone: Boolean(turn.draft.patientPhone),
       hasReason: Boolean(turn.draft.reason),
       hasDate: Boolean(turn.draft.preferredDate),
       hasTime: Boolean(turn.draft.preferredTime),
-      historySteps: turn.draft.history.length,
+      expectedField: turn.draft.expectedField,
     })
 
-    if (ready && isDraftReady(turn.draft)) {
-      // All required fields collected. Hand off to the AI to perform
-      // the actual booking via the book_appointment tool. We pass
-      // a tightly-scoped prompt that includes the collected fields
-      // and the available providers so the AI can pick providerId
-      // and startTime / endTime deterministically.
+    if (turn.isComplete && isDraftReady(turn.draft)) {
+      // All required fields collected. Hand off to the AI to do
+      // the actual booking.
       const aiResult = await bookAppointmentViaAi(context, turn.draft, conversationHistory)
+      // Persist the (now-collected) draft until booking actually
+      // succeeds; we clear it only after a successful tool result.
       await prisma.conversation.update({
         where: { id: context.conversation.id },
         data: {
@@ -109,12 +142,13 @@ export async function runAiReceptionist(
       return {
         response: aiResult.response,
         intent: "appointment",
-        confidence: Math.max(intentConfidence, 0.9),
+        confidence: 0.95,
         requiresClinic: aiResult.requiresClinic,
       }
     }
 
-    // Not yet complete — persist the draft and emit the next prompt.
+    // Not yet complete — persist the updated draft and emit the
+    // next prompt. The next prompt is deterministic; no LLM call.
     await prisma.conversation.update({
       where: { id: context.conversation.id },
       data: {
@@ -125,66 +159,71 @@ export async function runAiReceptionist(
         summary: message.content.slice(0, 200),
       },
     })
-
-    // We have a deterministic prompt. Use it directly; no LLM call
-    // required. This eliminates the "AI doesn't understand
-    // 'akarshit'" failure mode entirely.
-    if (nextPrompt) {
-      return {
-        response: nextPrompt,
-        intent: "appointment",
-        confidence: 0.95,
-        requiresClinic: false,
-      }
-    }
-  } else if (isAppointmentTrigger(message.content) || isSymptomTrigger(message.content)) {
-    // A new trigger on a conversation that had no draft. The
-    // processTurn() above already activated the draft (because the
-    // state machine's `active` is set inside the function), but the
-    // flow above didn't take the `turn.draft.active` branch. The
-    // simplest way to handle this is to re-call processTurn
-    // semantics here, but that's wasteful. Instead: explicitly
-    // activate below and re-derive the next prompt.
-    //
-    // The state machine is idempotent: calling processTurn on a
-    // message that activates returns draft.active=true. So re-running
-    // it is correct.
-    const turn2 = processTurn(
-      null,
-      message.content,
-      { id: message.from.id, phone: message.from.phone, name: message.from.name },
-    )
-    if (turn2.draft.active) {
-      await prisma.conversation.update({
-        where: { id: context.conversation.id },
-        data: {
-          metadata: writeDraftToMetadata(context.conversation.metadata, turn2.draft),
-          intent: "appointment",
-          isEmergency: false,
-          status: "active",
-          summary: message.content.slice(0, 200),
-        },
-      })
-      if (turn2.nextPrompt) {
-        return {
-          response: turn2.nextPrompt,
-          intent: "appointment",
-          confidence: 0.95,
-          requiresClinic: false,
-        }
-      }
+    return {
+      response: turn.nextPrompt || "Could you provide a bit more detail?",
+      intent: "appointment",
+      confidence: 0.95,
+      requiresClinic: false,
     }
   }
 
   // ========================================================================
-  // 3) NORMAL AI FLOW (greetings, FAQs, knowledge-base Q&A, RAG, etc.)
-  //    This runs ONLY when the appointment state machine is not active
-  //    for this turn. It is the catch-all for everything that is not
-  //    a booking.
+  // LEVEL 4: INTERRUPTION (active draft + non-slot question)
+  //   Active draft + non-slot question of any kind (clinic
+  //   information, insurance, symptom question). Preserve the
+  //   draft, answer the interruption normally. The receptionist
+  //   is the SOLE writer of `Conversation.metadata.appointmentDraft`,
+  //   so we do NOT touch metadata on the interruption path.
+  //   After the AI replies, the next user message is re-evaluated
+  //   and resumes from the correct missing field.
   // ========================================================================
-  logger.info("[AI-RECEPTIONIST] Calling AI with tools (non-appointment flow)", {
+  const isInterruption =
+    existingDraft && existingDraft.active &&
+    (decision.route === "APPOINTMENT_INTERRUPTION" ||
+     decision.route === "CLINIC_INFORMATION" ||
+     decision.route === "INSURANCE" ||
+     decision.route === "MEDICAL_SYMPTOM")
+  if (isInterruption) {
+    logger.info("[APPOINTMENT-FLOW] Interruption — answering normally, draft preserved", {
+      conversationId: context.conversation.id,
+      clinicId: context.clinicId,
+      interruptionRoute: decision.route,
+      expectedField: existingDraft.expectedField,
+    })
+    const aiResult = await generateAIResponseWithTools(
+      message.content,
+      context.clinicId,
+      conversationHistory,
+    )
+    return {
+      response: aiResult.response || "I'm here to help with appointments and clinic questions. Could you please provide more details?",
+      intent: "general_question",
+      confidence: 0.7,
+      requiresClinic: false,
+    }
+  }
+
+  // ========================================================================
+  // LEVEL 5-10: CANCEL / RESCHEDULE / CLINIC / INSURANCE / SYMPTOM / GENERAL
+  //   No active draft, or non-slot message. Route to the normal AI
+  //   flow. The AI handles medical guidance, FAQ, location, etc.
+  // ========================================================================
+  // For MEDICAL_SYMPTOM, prepend a "would you like to book?" offer
+  // to the response. This is the correct product behavior: a
+  // symptom question gets a medical guidance reply AND an
+  // invitation to book, but NEVER an automatic booking.
+  const intentForLogging: Intent =
+    decision.route === "CANCEL_INTENT" ? "general_question" :
+    decision.route === "RESCHEDULE_INTENT" ? "general_question" :
+    decision.route === "CLINIC_INFORMATION" ? "general_question" :
+    decision.route === "INSURANCE" ? "general_question" :
+    decision.route === "MEDICAL_SYMPTOM" ? "general_question" :
+    "general_question"
+
+  logger.info("[RECEPTIONIST] Normal flow", {
     conversationId: context.conversation.id,
     clinicId: context.clinicId,
+    route: decision.route,
     userMessage: message.content.slice(0, 120),
   })
 
@@ -195,14 +234,17 @@ export async function runAiReceptionist(
   )
 
   let response = aiResult.response
-  const aiConfidence = response && response.trim() ? 0.85 : 0
-  const requiresClinic = (aiConfidence < 0.6 && intent !== "appointment") || intent === "lead"
+  if (!response || !response.trim()) {
+    // Empty AI response. Do NOT pretend an appointment is being
+    // started. Fall back to a generic clarification.
+    response = "I'm here to help with appointments and clinic questions. Could you please provide more details?"
+  }
 
   return {
-    response: response || "I'll connect you with our team to help with your question.",
-    intent,
-    confidence: Math.max(intentConfidence, aiConfidence),
-    requiresClinic,
+    response,
+    intent: intentForLogging,
+    confidence: 0.7,
+    requiresClinic: false,
   }
 }
 
@@ -241,8 +283,6 @@ async function bookAppointmentViaAi(
     return { response: aiResult.response, requiresClinic: false }
   }
 
-  // Fallback: the AI didn't reply (e.g., tool call returned but no
-  // confirmation text). Provide a clear, factual confirmation.
   return {
     response:
       `Thanks${draft.patientName ? `, ${draft.patientName.split(/\s+/)[0]}` : ""}! ` +
