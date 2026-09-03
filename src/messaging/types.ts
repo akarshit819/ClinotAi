@@ -91,6 +91,14 @@ export interface ConversationSummary {
   lastMessageAt?: Date
   lastMessage?: string
   lastMessageFrom?: "user" | "assistant"
+  /**
+   * Raw Conversation.metadata blob. Used by the appointment state
+   * machine to persist the in-progress booking across worker restarts
+   * and across separate processing jobs. Format: JSON-stringified
+   * record with at least an `appointmentDraft` field. See
+   * `src/messaging/ai/appointment-state.ts` for the parser.
+   */
+  metadata?: string
   createdAt: Date
   updatedAt: Date
 }

@@ -56,6 +56,11 @@ async function getOrCreateConversation(
       lastMessageAt: existing.lastMessageAt || undefined,
       lastMessage: existing.messages[0]?.content?.slice(0, 120) || undefined,
       lastMessageFrom: (existing.messages[0]?.role as any) || undefined,
+      // The structured appointment draft (if any) is stored as a JSON
+      // blob inside Conversation.metadata. The receptionist module
+      // reads it directly via readDraftFromMetadata(); we do not parse
+      // it here because the receptionist owns the state machine.
+      metadata: existing.metadata || undefined,
       createdAt: existing.createdAt,
       updatedAt: existing.updatedAt,
     }
@@ -245,6 +250,13 @@ export async function processIncomingMessage(
   )
 
   const newStatus = aiResult.requiresClinic ? "waiting_clinic" : "active"
+  // The receptionist module already wrote Conversation.metadata (the
+  // appointment draft JSON) and Conversation.intent in its appointment
+  // branch. Here we only update fields that the pipeline owns:
+  // status, summary, lastMessageAt, confidence, isEmergency, isSpam.
+  // Crucially, we do NOT overwrite `metadata` here — the appointment
+  // state machine is the only owner of that field, and clobbering it
+  // would erase the in-progress booking on every turn.
   await prisma.conversation.update({
     where: { id: conversation.id },
     data: {
