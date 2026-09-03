@@ -39,7 +39,6 @@ let lastStaleRecoveryAt = 0
 let lastDbOkAt = 0
 let consecutivePollErrors = 0
 let activeJobs = 0
-let healthServer: import("http").Server | null = null
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -271,46 +270,6 @@ export async function processJobs() {
   }
 }
 
-function startHealthServer() {
-  const healthPort = process.env.PORT || process.env.HEALTH_PORT
-  if (!healthPort) {
-    logger.info("[WORKER] No PORT/HEALTH_PORT set — health endpoint disabled")
-    return
-  }
-  try {
-    import("http").then((http) => {
-      const server = http.createServer((req, res) => {
-        if (req.url === "/health" || req.url === "/" || req.url === "/api/health") {
-          const snapshot = getHealthSnapshot()
-          const body = JSON.stringify(snapshot)
-          res.writeHead(snapshot.database === "ok" ? 200 : 503, {
-            "Content-Type": "application/json",
-          })
-          res.end(body)
-        } else {
-          res.writeHead(404)
-          res.end()
-        }
-      })
-      // A port conflict or platform hiccup must degrade the health endpoint,
-      // not kill the processor loop.
-      server.on("error", (err: any) => {
-        logger.error("[WORKER] Health server error — processor continues without health endpoint", {
-          error: err?.message,
-        })
-      })
-      server.listen(Number(healthPort), () => {
-        healthServer = server
-        logger.info(`[WORKER] Health server started on port ${healthPort}`)
-      })
-    })
-  } catch (err: any) {
-    logger.error("[WORKER] Could not start health server — processor continues", {
-      error: err?.message,
-    })
-  }
-}
-
 async function verifyDatabaseConnection(): Promise<void> {
   const deadline = Date.now() + DB_WAIT_TIMEOUT_MS
   let attempt = 0
@@ -357,7 +316,7 @@ export async function stopJobProcessor(): Promise<void> {
  * (they would still be stale-recovered after a restart, but draining is
  * cleaner).
  */
-async function processShutdown(signal: string): Promise<void> {
+async function processShutdown(signal: string, mode: "internal" | "standalone"): Promise<void> {
   if (shutdownStarted) return
   shutdownStarted = true
   isShuttingDown = true
@@ -372,23 +331,24 @@ async function processShutdown(signal: string): Promise<void> {
 
   logger.info("[WORKER] Shutdown complete")
   try {
-    if (healthServer) healthServer.close()
-  } catch {
-    // ignore
-  }
-  try {
     await prisma.$disconnect()
   } catch {
     // ignore — we are exiting anyway
   }
-  process.exit(0)
+  // In standalone mode, this module is the entry point: exit the process.
+  // In internal mode, the launcher owns the process lifecycle: do NOT
+  // exit, because that would kill the Next.js child and any other
+  // in-process state the launcher is responsible for.
+  if (mode === "standalone") {
+    process.exit(0)
+  }
 }
 
-function registerSignalHandlers() {
+function registerSignalHandlers(mode: "internal" | "standalone") {
   if (signalHandlersRegistered) return
   signalHandlersRegistered = true
-  process.on("SIGTERM", () => void processShutdown("SIGTERM"))
-  process.on("SIGINT", () => void processShutdown("SIGINT"))
+  process.on("SIGTERM", () => void processShutdown("SIGTERM", mode))
+  process.on("SIGINT", () => void processShutdown("SIGINT", mode))
 }
 
 export interface StartWorkerOptions {
@@ -438,10 +398,9 @@ export async function startWorker(options: StartWorkerOptions = {}): Promise<voi
     logger.info("[WORKER] Job processor initialized")
 
     if (mode === "standalone") {
-      // Dedicated process extras: embedded health endpoint + crash-proofing.
-      // Internal mode skips these: the web service owns /api/health and the
-      // platform owns process-level crash handling.
-      startHealthServer()
+      // Standalone-mode extras: crash-proofing. Internal mode skips these
+      // because the launcher's own signal handlers and crash handling own
+      // the process lifecycle.
       process.on("uncaughtException", (err) => {
         logger.error("[WORKER] Uncaught exception in worker process (continuing):", {
           error: err.message,
@@ -456,7 +415,7 @@ export async function startWorker(options: StartWorkerOptions = {}): Promise<voi
     }
 
     // 3. Graceful shutdown on platform signals (both modes)
-    registerSignalHandlers()
+    registerSignalHandlers(mode)
 
     logger.info("[WORKER] Polling for jobs...", { baseIntervalMs: pollIntervalMs })
 
@@ -526,15 +485,18 @@ export function startInternalJobProcessor(): void {
 }
 
 // ─── Standalone Entry Point ────────────────────────────────────────────────────
-// `npm run worker` runs this module directly as a dedicated worker process.
-// Normal deployments do NOT use this path — the web server starts the
-// internal processor via instrumentation. Kept for explicit standalone
-// deployments and local debugging.
+// `npm run worker` runs this module directly as a dedicated worker process
+// (process.argv[1] === this file's absolute path). The single-service
+// launcher (`scripts/start-production.js`) `require()`s this module and
+// calls `startWorker({ mode: "internal" })` explicitly — when that
+// happens, the bottom-of-file auto-start MUST NOT run a second loop, so
+// it is gated on `require.main === module` (true only when this file is
+// the process entry point).
 const isTestEnv =
   process.env.NODE_ENV === "test" ||
   process.env.VITEST === "true" ||
   typeof (globalThis as any).describe === "function"
 
-if (!isTestEnv) {
+if (!isTestEnv && require.main === module) {
   void startWorker({ mode: "standalone" })
 }

@@ -12,19 +12,27 @@ Render PostgreSQL (one instance)
         └── Web Service (clinot-ai)      Build:  npm ci && npm run build
                                        Start:  npm run start
                                        Health: /api/health
-            ├── Next.js web app + API routes
-            └── Internal background job processor
-                (started automatically by src/instrumentation.ts)
-                 → WhatsApp queue, AI processing, outbound messages,
-                   retries/backoff, dead-letter, stale-job recovery
+            │
+            └── scripts/start-production.js  (Node-level launcher)
+                  │
+                  ├── prisma generate
+                  ├── prisma migrate deploy
+                  ├── system / admin / dev / WhatsApp seeds
+                  ├── start internal job processor (in this Node process)
+                  │       → WhatsApp queue, AI processing, outbound
+                  │         messages, retries/backoff, dead-letter,
+                  │         stale-job recovery
+                  └── spawn node .next/standalone/server.js (Next.js)
 ```
 
 - **No separate worker service is required.** One web service runs
-  everything. `npm run start` boots the web server, which starts the
-  internal job processor asynchronously — the HTTP server is never blocked,
-  and a processor failure only retries (never takes the site down).
+  everything. `npm run start` invokes `scripts/start-production.js`,
+  which starts the internal job processor in the SAME Node process
+  and then spawns the Next.js production server as a child. The
+  launcher owns SIGTERM/SIGINT: it forwards the signal to the Next.js
+  child and drains in-flight jobs before exit.
 - **Migrations run at web-service boot**, before the server starts
-  (`prisma generate` → `prisma migrate deploy` → seeds → server).
+  (`prisma generate` → `prisma migrate deploy` → seeds → worker + web).
 - **No Redis.** `REDIS_URL` is read by `src/lib/env.ts` but consumed by
   nothing — the queue is the PostgreSQL `Job` table, which is the source of
   truth. PENDING jobs survive restarts; stale PROCESSING jobs are recovered.
@@ -34,6 +42,30 @@ Render PostgreSQL (one instance)
   unusual scaling needs; set `CLINOT_DISABLE_INTERNAL_WORKER=true` on the web
   service if you run one, to avoid duplicate polling loops (claiming is
   atomic, so two processors are safe — just redundant).
+
+### Why the worker is started from the launcher, not from `instrumentation.ts`
+
+Next.js 14 compiles `src/instrumentation.ts` for BOTH the Node.js and
+the Edge runtimes. Webpack statically resolves every reachable import
+— including dynamic `import("...")` calls with literal string
+arguments. The worker module's dependency graph (Prisma,
+`@/integrations/token-store` → `crypto`, `@/lib/encryption` → `crypto`,
+`@/messaging/pipeline`, etc.) is Node-only, and starting the worker
+from `instrumentation.ts` would force the Edge runtime's compilation
+graph to attempt resolving Node built-ins like `crypto` and `http`,
+breaking the production build with `Module not found: Can't resolve
+'crypto' / 'http'`.
+
+By starting the worker in the production launcher — a pure Node.js
+script that Webpack never touches — the worker's Node-only module
+graph stays entirely outside the Next.js compilation pipeline. The
+runtime contract is preserved: one service, one boot command, one
+health endpoint, one restart unit, one process tree.
+
+`src/instrumentation.ts` remains in place because
+`experimental.instrumentationHook: true` is set in `next.config.js`,
+but it only validates production secrets. It imports no Node built-ins
+and no worker code, so it is safe in the Edge runtime.
 
 ## Required environment variables
 

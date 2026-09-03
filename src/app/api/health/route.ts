@@ -1,8 +1,37 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/db"
-import { getHealthSnapshot } from "@/lib/jobs/worker"
+import fs from "fs"
+import os from "os"
+import path from "path"
 
 export const dynamic = "force-dynamic"
+
+/**
+ * The internal job processor runs in the production launcher process
+ * (see scripts/start-production.js). The Next.js HTTP server runs in
+ * a child process. They cannot share in-memory state, so the launcher
+ * periodically writes the worker's health snapshot to a JSON file
+ * under os.tmpdir(). This route reads that file and reports the
+ * worker's status alongside the rest of the system.
+ *
+ * If the file is absent or stale (>5s old), the worker is considered
+ * unreachable. The HTTP layer is independent of the worker, so a
+ * missing or stale snapshot does NOT flip the whole service unhealthy.
+ */
+function readWorkerSnapshot(): Record<string, unknown> {
+  const file = process.env.CLINOT_WORKER_HEALTH_FILE || path.join(os.tmpdir(), "clinot-worker-health.json")
+  try {
+    const raw = fs.readFileSync(file, "utf8")
+    const parsed = JSON.parse(raw) as { writtenAt?: number } & Record<string, unknown>
+    const ageMs = typeof parsed.writtenAt === "number" ? Date.now() - parsed.writtenAt : Infinity
+    if (ageMs > 5_000) {
+      return { running: false, database: "unreachable", status: "degraded", ageMs }
+    }
+    return parsed
+  } catch {
+    return { running: false, database: "unreachable", status: "degraded" }
+  }
+}
 
 export async function GET() {
   const checks: Record<string, string> = {}
@@ -14,15 +43,7 @@ export async function GET() {
     checks.database = "error"
   }
 
-  // Internal background job processor status (single-service architecture).
-  // The processor retrying never flips the whole service unhealthy — the
-  // HTTP layer is independent — but it is surfaced here for observability.
-  let jobProcessor: Record<string, unknown> = { running: false }
-  try {
-    jobProcessor = getHealthSnapshot()
-  } catch {
-    // Health must never crash because of the processor
-  }
+  const jobProcessor = readWorkerSnapshot()
 
   const allOk = Object.values(checks).every((v) => v === "ok")
 

@@ -12,17 +12,39 @@
  *     4. npx tsx src/bootstrap-admin.ts (if CLINOT_BOOTSTRAP_ADMIN=true)
  *     5. npx tsx src/seed-dev-user.ts (if CLINOT_DEV_SEED=true)
  *     6. npx tsx src/seed-whatsapp.ts (if WhatsApp env vars configured)
- *     7. node .next/standalone/server.js (or `next start` fallback)
+ *     7. start the INTERNAL job processor in THIS process (Node-level —
+ *        not Webpack-compiled, so Node built-ins are safe)
+ *     8. spawn node .next/standalone/server.js as a child process
+ *     9. own SIGTERM/SIGINT: forward to the child, drain the worker
  *
- *     The Next.js server starts an INTERNAL background job processor
- *     automatically (src/instrumentation.ts) — WhatsApp webhooks, AI
- *     processing, outbound messages, retries and stale-job recovery all
- *     run inside this one service. PostgreSQL remains the queue's source
- *     of truth. The processor never blocks or terminates HTTP serving.
+ *   Architectural note (why the worker is started HERE, not in
+ *   src/instrumentation.ts):
+ *
+ *   Next.js 14 compiles instrumentation.ts for BOTH the Node.js and the
+ *   Edge runtimes, and Webpack statically resolves every reachable
+ *   import — including dynamic imports with literal-string arguments.
+ *   The worker depends on Node built-ins (`crypto`, `http`) and on
+ *   modules that import them (`token-store`, `encryption`). Starting
+ *   the worker from instrumentation.ts forces the Edge runtime's
+ *   module graph to attempt resolving Node built-ins and fails the
+ *   production build with "Can't resolve 'crypto' / 'http'".
+ *
+ *   Starting the worker in this Node-only launcher (which is never
+ *   touched by Webpack) keeps the worker's Node-only module graph
+ *   entirely outside the Next.js compilation pipeline. The runtime
+ *   contract is preserved: one service, one boot command, one health
+ *   endpoint, one restart unit. From Render's perspective there is
+ *   exactly one process tree owned by this launcher.
  *
  *   Optional dedicated worker (rarely needed): start `npm run worker`
- *   directly as its own service. No WORKER_MODE flag exists anymore.
+ *   directly as its own service. No WORKER_MODE flag exists.
  */
+
+// Register ts-node for any in-process TypeScript imports (e.g. the worker
+// is a .ts file but the launcher uses the compiled .js from .next/standalone
+// — see postbuild.js). The worker module is loaded via the built-in
+// `tsx` require hook so that .ts imports resolve at runtime.
+require("tsx/cjs")
 
 const { execSync, spawn } = require("child_process")
 const fs = require("fs")
@@ -55,16 +77,211 @@ function runCommand(command, description, failOnError = true) {
   }
 }
 
+/**
+ * Resolve the worker's path. The worker source is a TypeScript file
+ * (`src/lib/jobs/worker.ts`). In production we load it through tsx's
+ * require hook (registered at the top of this file), so the literal
+ * .ts path is fine.
+ *
+ * The worker module is loaded exactly once, in this process, by the
+ * launcher. It does NOT enter the Next.js Webpack compilation graph
+ * because nothing Next.js compiles imports it.
+ *
+ * Because the worker lives in the launcher process and the Next.js
+ * HTTP server lives in a child process, the launcher's `getHealthSnapshot`
+ * is the only authoritative source for worker state. To keep
+ * `/api/health` (served by the Next.js child) accurate, the launcher
+ * periodically writes the snapshot to a file in os.tmpdir() that the
+ * API route reads. The file path is also exported so the API route
+ * can be configured to read the same location in all environments.
+ */
+function healthSnapshotPath() {
+  return path.join(require("os").tmpdir(), "clinot-worker-health.json")
+}
+
+function startHealthBridge(workerModule) {
+  if (!workerModule || typeof workerModule.getHealthSnapshot !== "function") return
+  const file = healthSnapshotPath()
+  const tick = () => {
+    try {
+      const snap = workerModule.getHealthSnapshot()
+      fs.writeFileSync(file, JSON.stringify({ ...snap, writtenAt: Date.now() }))
+    } catch (err) {
+      const msg = (err && err.message) || "unknown"
+      try { fs.writeFileSync(file, JSON.stringify({ status: "degraded", running: false, database: "unreachable", writtenAt: Date.now(), error: msg })) } catch {}
+    }
+  }
+  // Wait briefly before the first write so the worker has time to
+  // complete `verifyDatabaseConnection` and set lastDbOkAt. Without
+  // this delay, the first snapshot would be `database: "unreachable"`
+  // even though the worker is about to connect — the API route would
+  // then briefly report the worker as down on every boot.
+  const firstTick = setTimeout(tick, 500)
+  firstTick.unref?.()
+  const interval = setInterval(tick, 2000)
+  interval.unref?.()
+  return () => {
+    clearTimeout(firstTick)
+    clearInterval(interval)
+    try { fs.unlinkSync(file) } catch {}
+  }
+}
+
+function startInternalWorker() {
+  if (process.env.CLINOT_DISABLE_INTERNAL_WORKER === "true") {
+    console.log("[boot] CLINOT_DISABLE_INTERNAL_WORKER=true — internal worker disabled")
+    return null
+  }
+  if (process.env.WORKER_MODE === "true") {
+    // Legacy guard: a dedicated standalone worker is also running. The
+    // launcher must not start a second polling loop.
+    console.log("[boot] WORKER_MODE=true — dedicated worker handles jobs; launcher skips internal processor")
+    return null
+  }
+
+  console.log("[boot] Starting internal job processor (Node-level)... (${stamp()})".replace("${stamp()}", stamp()))
+  const workerModule = require(path.join(rootDir, "src", "lib", "jobs", "worker.ts"))
+  // startWorker returns a promise that resolves only on shutdown; we run it
+  // in the background. The worker registers its own signal handlers, but
+  // because this launcher also installs handlers we coordinate below.
+  workerModule.startWorker({ mode: "internal" }).catch((err) => {
+    // Internal mode never throws out of startWorker — startup failures
+    // are retried inside the worker. This catch is a belt-and-suspenders
+    // guard for unexpected promise rejections.
+    console.error("[boot] Internal job processor rejected:", err)
+  })
+  // Export the snapshot path so the API route can read it. The API
+  // route lives in a child process and cannot import this module.
+  process.env.CLINOT_WORKER_HEALTH_FILE = healthSnapshotPath()
+  return workerModule
+}
+
+/**
+ * Spawn the Next.js production server as a child process and forward
+ * lifecycle events back to the launcher.
+ */
+function spawnNextServer() {
+  const standaloneServer = path.join(rootDir, ".next", "standalone", "server.js")
+  let command, args
+  if (fs.existsSync(standaloneServer)) {
+    console.log("[boot] Standalone build detected — using node .next/standalone/server.js")
+    command = process.execPath
+    args = [standaloneServer]
+  } else {
+    console.log("[boot] No standalone build found — falling back to `next start`")
+    command = "npx"
+    args = ["next", "start", "-p", process.env.PORT || "3000"]
+  }
+
+  const child = spawn(command, args, {
+    cwd: rootDir,
+    stdio: "inherit",
+    // Force the bind address to 0.0.0.0: the Next standalone server uses
+    // process.env.HOSTNAME as its bind host, and container platforms often
+    // set HOSTNAME to the container name — which can bind to a non-routable
+    // interface so platform health checks never connect.
+    env: { ...process.env, HOSTNAME: "0.0.0.0" },
+    shell: command === "npx",
+  })
+
+  child.on("exit", (code, signal) => {
+    console.log(`[web] Next.js server exited (code=${code}, signal=${signal || "none"})`)
+    // The Next.js child is the only long-running component besides the
+    // worker. Its exit signals the end of the web service; the launcher's
+    // own shutdown handlers will drain the worker.
+    process.exit(code ?? (signal ? 1 : 0))
+  })
+
+  return child
+}
+
+let shuttingDown = false
+
+function installSignalHandlers(workerModule, webChild, stopHealthBridge) {
+  const handle = (signal) => {
+    if (shuttingDown) return
+    shuttingDown = true
+    console.log(`[boot] ${signal} received — beginning graceful shutdown`)
+
+    // 0. Stop the health bridge so it no longer writes to the file.
+    try { stopHealthBridge?.() } catch {}
+
+    // 1. Forward the signal to the Next.js child. Next.js 14's
+    // standalone server responds to SIGTERM by closing the HTTP
+    // listener, but on some platforms it can take 30+ seconds to
+    // actually exit. We give it a bounded window, then SIGKILL.
+    if (webChild && !webChild.killed) {
+      try {
+        webChild.kill(signal)
+      } catch (err) {
+        console.error("[boot] Failed to forward signal to Next.js child:", err.message)
+      }
+    }
+
+    // 2. Drain the worker. stopJobProcessor waits up to SHUTDOWN_GRACE_MS
+    // for in-flight jobs to finish, then resolves. It does NOT exit the
+    // process — the launcher's own exit happens when the child exits.
+    if (workerModule) {
+      const drainTimeoutMs = 35_000
+      const drainTimer = setTimeout(() => {
+        console.error(`[boot] Worker drain timed out after ${drainTimeoutMs}ms — forcing exit`)
+        process.exit(1)
+      }, drainTimeoutMs)
+      drainTimer.unref?.()
+      workerModule.stopJobProcessor().then(
+        () => {
+          console.log("[boot] Worker drained cleanly")
+          // The Next.js child is the primary exit driver; if it's still
+          // alive, give it a short window then escalate to SIGKILL.
+          if (webChild && !webChild.killed) {
+            const killTimer = setTimeout(() => {
+              if (!webChild.killed) {
+                console.error("[boot] Next.js child did not exit after drain — sending SIGKILL")
+                try { webChild.kill("SIGKILL") } catch {}
+              }
+            }, 5_000)
+            killTimer.unref?.()
+          }
+        },
+        (err) => {
+          console.error("[boot] Worker drain failed:", err)
+          if (webChild && !webChild.killed) {
+            try { webChild.kill("SIGKILL") } catch {}
+          }
+        },
+      )
+    } else {
+      // No worker — the Next.js child is the only long-running thing.
+      if (webChild && !webChild.killed) {
+        const killTimer = setTimeout(() => {
+          if (!webChild.killed) {
+            console.error("[boot] Next.js child did not exit after signal — sending SIGKILL")
+            try { webChild.kill("SIGKILL") } catch {}
+          }
+        }, 5_000)
+        killTimer.unref?.()
+      }
+    }
+  }
+
+  process.on("SIGTERM", () => handle("SIGTERM"))
+  process.on("SIGINT", () => handle("SIGINT"))
+}
+
 async function main() {
   console.log("============================================================")
   console.log("  CLINOT AI — PRODUCTION INITIALIZATION & STARTUP")
   console.log("============================================================")
 
-  // 1. Generate Prisma Client
-  runCommand("npx prisma generate", "Generating Prisma client", true)
+  // 1. Generate Prisma Client (skippable in CI/test where the engine is
+  // already up-to-date and the test process holds the .dll open).
+  if (process.env.CLINOT_SKIP_PRISMA_GENERATE === "true") {
+    console.log("[boot] CLINOT_SKIP_PRISMA_GENERATE=true — skipping prisma generate")
+  } else {
+    runCommand("npx prisma generate", "Generating Prisma client", true)
+  }
 
   // 2. Apply Prisma Migrations (Production-safe, non-destructive)
-  // Recover from potential rolled-back state first if needed
   try {
     execSync("npx prisma migrate resolve --rolled-back 20260816000000_init", {
       cwd: rootDir,
@@ -84,8 +301,6 @@ async function main() {
   // 4. Opt-in Admin Bootstrap (if CLINOT_BOOTSTRAP_ADMIN=true)
   if (process.env.CLINOT_BOOTSTRAP_ADMIN === "true") {
     console.log("[boot] CLINOT_BOOTSTRAP_ADMIN=true detected")
-    // Fail fast: the operator explicitly requested admin creation. Silently
-    // continuing would produce a deployment where login cannot work.
     runCommand("npx tsx src/bootstrap-admin.ts", "Bootstrapping initial admin account", true)
   }
 
@@ -100,43 +315,25 @@ async function main() {
     runCommand("npx tsx src/seed-whatsapp.ts", "Connecting WhatsApp Business Account", false)
   }
 
-  // 7. Start the Next.js production web server.
-  // next.config.js uses output: "standalone" — prefer the self-contained
-  // server it generates. `next start` explicitly does not support it.
-  // scripts/postbuild.js copies public/ and .next/static/ into the
-  // standalone folder after every `npm run build`.
   console.log("============================================================")
-  console.log("  STARTING NEXT.JS PRODUCTION WEB SERVER")
+  console.log("  STARTING INTERNAL JOB PROCESSOR + NEXT.JS SERVER")
   console.log("============================================================")
 
-  const standaloneServer = path.join(rootDir, ".next", "standalone", "server.js")
+  // 7. Start the internal job processor IN THIS PROCESS. The worker
+  // polling loop runs in the same Node process as the launcher; it is
+  // not Webpack-compiled, so Node built-ins (crypto, http) are safe.
+  const workerModule = startInternalWorker()
 
-  let command, args
-  if (fs.existsSync(standaloneServer)) {
-    console.log("[boot] Standalone build detected — using node .next/standalone/server.js")
-    command = process.execPath
-    args = [standaloneServer]
-  } else {
-    console.log("[boot] No standalone build found — falling back to `next start`")
-    command = "npx"
-    args = ["next", "start", "-p", process.env.PORT || "3000"]
-  }
+  // 7a. Bridge the worker's in-memory health snapshot to a file the
+  // Next.js child can read (separate process, separate memory).
+  const stopHealthBridge = startHealthBridge(workerModule)
 
-  const webProcess = spawn(command, args, {
-    cwd: rootDir,
-    stdio: "inherit",
-    // Force the bind address to 0.0.0.0: the Next standalone server uses
-    // process.env.HOSTNAME as its bind host, and container platforms often
-    // set HOSTNAME to the container name — which can bind to a non-routable
-    // interface so platform health checks never connect.
-    env: { ...process.env, HOSTNAME: "0.0.0.0" },
-    shell: command === "npx",
-  })
+  // 8. Spawn the Next.js production server as a child.
+  const webChild = spawnNextServer()
 
-  webProcess.on("exit", (code) => {
-    console.log(`[web] Next.js server exited with code ${code}`)
-    process.exit(code || 0)
-  })
+  // 9. Install signal handlers so SIGTERM/SIGINT cleanly drain both
+  // the worker and the Next.js child.
+  installSignalHandlers(workerModule, webChild, stopHealthBridge)
 }
 
 main().catch((err) => {

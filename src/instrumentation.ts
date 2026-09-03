@@ -1,19 +1,27 @@
 import { validateProductionSecrets } from "./lib/env"
 
+// Next.js 14 compiles this file for BOTH the Node.js and Edge runtimes.
+// Anything reachable from here is statically analyzed by Webpack and must
+// therefore be safe in the Edge runtime. That means: NO Node built-ins
+// (crypto, http, fs, process.exit, etc.) and NO Node-only modules
+// (Prisma, the job worker, token-store, encryption).
+//
+// The internal background job processor is started by the production
+// launcher (scripts/start-production.js) BEFORE Next.js boots. That
+// keeps the worker's Node-only module graph out of the Webpack
+// compilation entirely. This file is therefore a no-op beyond secret
+// validation; it exists to keep the instrumentationHook contract.
+//
+// See docs/RENDER-DEPLOYMENT.md and the architectural notes in
+// scripts/start-production.js for the full startup flow.
 export async function register(): Promise<void> {
-  // Existing behavior: fail visibly when required production secrets are
-  // missing or malformed (does not exit the process — the deploy log shows it).
-  validateProductionSecrets()
-
-  // Single-service architecture: start the internal background job processor
-  // inside the web server process. Fire-and-forget — it never blocks or
-  // terminates HTTP serving, and its failures are retried, not fatal.
-  // PostgreSQL remains the queue's source of truth.
   if (process.env.NEXT_RUNTIME !== "nodejs") return
   try {
-    const { startInternalJobProcessor } = await import("@/lib/jobs/worker")
-    startInternalJobProcessor()
+    validateProductionSecrets()
   } catch (err) {
-    console.error("[instrumentation] Failed to start internal job processor:", err)
+    // Validation must be visible in the deploy log; we do not exit the
+    // process here because the production launcher will also run the
+    // same check and abort the boot if secrets are missing.
+    console.error("[instrumentation] Secret validation failed:", (err as Error).message)
   }
 }
