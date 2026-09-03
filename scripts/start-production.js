@@ -127,6 +127,75 @@ function startHealthBridge(workerModule) {
   }
 }
 
+/**
+ * Post-migration schema verification.
+ *
+ * Connects to the production PostgreSQL using the same DATABASE_URL the
+ * Prisma client uses, and confirms that the critical tables exist. The
+ * worker cannot function without these tables; if any are missing the
+ * deployment must fail visibly.
+ *
+ * Uses the `pg` package directly (not the Prisma client) so this
+ * verification is independent of the Prisma engine .dll state.
+ */
+async function verifySchemaReadiness() {
+  const databaseUrl = process.env.DATABASE_URL
+  if (!databaseUrl) {
+    console.error("[boot] FATAL: DATABASE_URL is not set — cannot verify schema")
+    throw new Error("DATABASE_URL is not set")
+  }
+  // Log only safe metadata. Never print the full connection string.
+  let host = "unknown"
+  let dbName = "unknown"
+  try {
+    const u = new URL(databaseUrl)
+    host = u.hostname
+    dbName = (u.pathname || "/").replace(/^\//, "") || "unknown"
+  } catch {
+    // If DATABASE_URL is malformed, still log the host as unknown.
+  }
+  console.log(`[boot] Verifying schema readiness (host=${host}, database=${dbName})`)
+
+  // Critical tables the worker and webhook handlers need.
+  const CRITICAL_TABLES = [
+    "Job",                       // Internal job processor queue
+    "WhatsAppPhoneNumber",        // WhatsApp webhook → clinic resolution
+    "WhatsAppBusinessAccount",   // WhatsApp WABA → clinic resolution
+    "WhatsAppWebhookEvent",      // WhatsApp webhook idempotency
+    "Clinic",                    // FK target for Job.clinicId
+    "User",                      // Auth + session
+    "Integration",               // Fallback clinic resolution
+  ]
+
+  let Client
+  try {
+    Client = require("pg").Client
+  } catch (err) {
+    console.error("[boot] FATAL: 'pg' module is not installed — cannot verify schema:", err.message)
+    throw err
+  }
+
+  const client = new Client({ connectionString: databaseUrl })
+  try {
+    await client.connect()
+    const r = await client.query(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ANY($1::text[])`,
+      [CRITICAL_TABLES],
+    )
+    const present = new Set(r.rows.map((row) => row.table_name))
+    const missing = CRITICAL_TABLES.filter((t) => !present.has(t))
+    if (missing.length > 0) {
+      console.error(`[boot] FATAL: Schema verification FAILED. Missing critical tables: ${missing.join(", ")}`)
+      console.error(`[boot] This usually means migrations did not run correctly.`)
+      console.error(`[boot] Verify that prisma/migrations/ contains a migration that creates these tables.`)
+      throw new Error(`Schema verification failed: missing tables ${missing.join(", ")}`)
+    }
+    console.log(`[boot] ✓ Schema verification passed (${CRITICAL_TABLES.length} critical tables present)`)
+  } finally {
+    try { await client.end() } catch {}
+  }
+}
+
 function startInternalWorker() {
   if (process.env.CLINOT_DISABLE_INTERNAL_WORKER === "true") {
     console.log("[boot] CLINOT_DISABLE_INTERNAL_WORKER=true — internal worker disabled")
@@ -292,6 +361,24 @@ async function main() {
     // Harmless if not in rolled-back state
   }
   runCommand("npx prisma migrate deploy", "Applying database migrations (prisma migrate deploy)", true)
+
+  // 2a. Post-migration schema verification.
+  //
+  // `prisma migrate deploy` is supposed to bring the schema up to the
+  // current Prisma migration directory. In practice, a missing
+  // migration (or a partial one — see the 20260903000000_* migration
+  // that added the Job, MessengerWebhookEvent, and InstagramWebhookEvent
+  // tables that were missing from the initial migration) can leave
+  // the schema incomplete. If we start the worker against a database
+  // with no `Job` table, every poll throws "relation does not exist"
+  // and the deployment looks healthy while it is actually broken.
+  //
+  // We verify the critical tables directly via a raw pg query, using
+  // the DATABASE_URL connection. This is a separate connection from
+  // the Prisma client the worker uses, so the .dll lock issue does
+  // not apply. If any critical table is missing, we abort with a
+  // clear, non-zero exit so the platform's deploy failure is visible.
+  await verifySchemaReadiness()
 
   // 3. Provision System Data (Permissions, Plans, Clinic Template)
   // FATAL on failure: roles/permissions are required for login and booking —

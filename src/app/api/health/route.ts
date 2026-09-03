@@ -36,11 +36,34 @@ function readWorkerSnapshot(): Record<string, unknown> {
 export async function GET() {
   const checks: Record<string, string> = {}
 
+  // 1) Database connectivity + schema readiness. `SELECT 1` only proves
+  // the database is up; we ALSO verify the `Job` table exists, which is
+  // the table the worker polls. If migrations have not run, the worker
+  // will fail on every poll and the health check must report degraded
+  // so platform health checks (and operators) see the real state.
   try {
     await prisma.$queryRaw`SELECT 1`
     checks.database = "ok"
   } catch {
     checks.database = "error"
+  }
+
+  let schemaReady = false
+  if (checks.database === "ok") {
+    try {
+      const r: Array<{ exists: boolean }> = await prisma.$queryRaw`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_name = 'Job'
+        ) AS exists
+      `
+      schemaReady = r[0]?.exists === true
+      checks.schema = schemaReady ? "ok" : "migrations_pending"
+    } catch {
+      checks.schema = "error"
+    }
+  } else {
+    checks.schema = "skipped"
   }
 
   const jobProcessor = readWorkerSnapshot()
@@ -54,6 +77,7 @@ export async function GET() {
       uptime: process.uptime(),
       version: process.env.NEXT_PUBLIC_APP_VERSION || "1.0.0",
       checks,
+      schema: { jobTableExists: schemaReady },
       jobProcessor,
     },
     {
@@ -62,3 +86,4 @@ export async function GET() {
     },
   )
 }
+

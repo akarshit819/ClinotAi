@@ -57,8 +57,13 @@ export async function POST(req: NextRequest) {
     // Resolve the clinic from the phone number that received the webhook.
     // Credentials are encrypted at rest so a plaintext search cannot match;
     // the WhatsAppPhoneNumber record is the canonical clinic link.
+    //
+    // `phoneNumberId` is NOT globally unique — the schema's compound unique
+    // key is (clinicId, phoneNumberId). If multiple clinics somehow share a
+    // phoneNumberId (which they should not, but the schema allows it), the
+    // first match wins here. The fallback below uses the Integration record.
     const phoneRecord = await prisma.whatsAppPhoneNumber.findFirst({
-      where: { phoneNumberId } as any,
+      where: { phoneNumberId },
     })
     let clinicId: string | null = phoneRecord?.clinicId || null
 
@@ -116,12 +121,28 @@ export async function POST(req: NextRequest) {
         },
       })
 
-      // Update 24-hour window tracking on inbound patient message
-      if (msg.from && phoneNumberId) {
-        await prisma.whatsAppPhoneNumber.update({
-          where: { phoneNumberId } as any,
-          data: { lastMessageAt: new Date(parseInt(msg.timestamp) * 1000) },
-        })
+      // Update 24-hour window tracking on inbound patient message.
+      // The schema's unique key on WhatsAppPhoneNumber is the compound
+      // (clinicId, phoneNumberId) — phoneNumberId alone is NOT unique.
+      // We use the compound key here so the update is correctly scoped
+      // to a single clinic's phone record, preserving multi-tenant
+      // isolation.
+      if (msg.from && phoneNumberId && clinicId) {
+        try {
+          await prisma.whatsAppPhoneNumber.update({
+            where: { clinicId_phoneNumberId: { clinicId, phoneNumberId } },
+            data: { lastMessageAt: new Date(parseInt(msg.timestamp) * 1000) },
+          })
+        } catch (err) {
+          // P2025 = record not found. This can happen if the phone record
+          // was deleted between resolution and update. Log and continue —
+          // the inbound message is still enqueued for processing.
+          logger.warn("WhatsApp phone record update failed; continuing", {
+            clinicId,
+            phoneNumberId,
+            error: (err as Error).message,
+          })
+        }
       }
 
       // Enqueue job for async processing
