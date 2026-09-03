@@ -19,6 +19,9 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ["lucide-react"],
     scrollRestoration: true,
+    // Required for src/instrumentation.ts — starts the internal background
+    // job processor when the web server boots (single-service architecture).
+    instrumentationHook: true,
   },
   async headers() {
     return [

@@ -2,25 +2,16 @@
 set -e
 
 # ============================================================================
-# ARCHITECTURE (no recursion, one process per service):
-#
-#   WEB SERVICE  (WORKER_MODE unset/false):
-#     prisma generate → prisma migrate deploy → seeds → Next server
-#     The WEB service is the ONLY place migrations run.
-#
-#   WORKER SERVICE (WORKER_MODE=true):
-#     npm run worker → worker.ts (validates env, waits for PostgreSQL, polls
-#     forever). NO migrations, NO Next.js — so Web + Worker booting at the
-#     same time can never race on `prisma migrate deploy`.
+# SINGLE-SERVICE ARCHITECTURE:
+#   This one service runs everything: prisma generate → prisma migrate deploy
+#   → seeds → Next.js web/API + an INTERNAL background job processor started
+#   automatically by src/instrumentation.ts (WhatsApp queue, AI processing,
+#   retries, stale-job recovery). PostgreSQL is the queue's source of truth.
+#   No separate worker service and no WORKER_MODE flag are required.
+#   (`npm run worker` still exists for an optional standalone deployment.)
 # ============================================================================
 
-# 1. Worker mode: start the background worker directly.
-if [ "$WORKER_MODE" = "true" ]; then
-  echo "[boot] WORKER_MODE enabled - starting background worker (migrations are owned by the Web service)..."
-  exec npm run worker
-fi
-
-# 2. Web service: apply database migrations. Production schema is managed by
+# 1. Apply database migrations. Production schema is managed by
 # Prisma migrations, never `db push` (which would silently drift).
 npx prisma generate
 

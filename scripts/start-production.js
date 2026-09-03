@@ -1,17 +1,11 @@
 #!/usr/bin/env node
 
 /**
- * Production Startup Orchestrator for Voroa / Container Deployments
+ * Production Startup Orchestrator for Render / Voroa / Container Deployments
  *
- * ARCHITECTURE (one process per service, no recursion):
+ * SINGLE-SERVICE ARCHITECTURE (no separate Background Worker required):
  *
- *   WORKER SERVICE (WORKER_MODE=true):
- *     Spawns the background worker directly. NO migrations, NO seeds, NO
- *     Next.js — the Web service owns schema migrations, so Web + Worker
- *     booting simultaneously can never race on `prisma migrate deploy`.
- *     The worker validates env, waits for PostgreSQL, and polls forever.
- *
- *   WEB SERVICE (default):
+ *   npm run start:
  *     1. npx prisma generate
  *     2. npx prisma migrate deploy (production-safe, non-destructive)
  *     3. npx tsx src/seed-system.ts (idempotent system permissions/plans)
@@ -19,6 +13,15 @@
  *     5. npx tsx src/seed-dev-user.ts (if CLINOT_DEV_SEED=true)
  *     6. npx tsx src/seed-whatsapp.ts (if WhatsApp env vars configured)
  *     7. node .next/standalone/server.js (or `next start` fallback)
+ *
+ *     The Next.js server starts an INTERNAL background job processor
+ *     automatically (src/instrumentation.ts) — WhatsApp webhooks, AI
+ *     processing, outbound messages, retries and stale-job recovery all
+ *     run inside this one service. PostgreSQL remains the queue's source
+ *     of truth. The processor never blocks or terminates HTTP serving.
+ *
+ *   Optional dedicated worker (rarely needed): start `npm run worker`
+ *   directly as its own service. No WORKER_MODE flag exists anymore.
  */
 
 const { execSync, spawn } = require("child_process")
@@ -52,34 +55,10 @@ function runCommand(command, description, failOnError = true) {
   }
 }
 
-function startWorkerProcess() {
-  console.log("============================================================")
-  console.log("  STARTING BACKGROUND WORKER (WORKER_MODE=true)")
-  console.log("  No migrations here — the Web service owns the schema.")
-  console.log("============================================================")
-  const workerProcess = spawn("npx", ["tsx", "src/lib/jobs/worker.ts"], {
-    cwd: rootDir,
-    stdio: "inherit",
-    env: process.env,
-    shell: true,
-  })
-
-  workerProcess.on("exit", (code) => {
-    console.log(`[worker] Worker process exited with code ${code}`)
-    process.exit(code || 0)
-  })
-}
-
 async function main() {
   console.log("============================================================")
   console.log("  CLINOT AI — PRODUCTION INITIALIZATION & STARTUP")
   console.log("============================================================")
-
-  // Worker branch FIRST — no migrations, no seeds, no Next.js.
-  if (process.env.WORKER_MODE === "true") {
-    startWorkerProcess()
-    return
-  }
 
   // 1. Generate Prisma Client
   runCommand("npx prisma generate", "Generating Prisma client", true)

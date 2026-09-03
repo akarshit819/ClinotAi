@@ -12,23 +12,29 @@ import { processIncomingMessage } from "@/messaging/pipeline"
 import { sendWithRateLimit } from "@/integrations/whatsapp/delivery"
 import { getCredentials } from "@/integrations/token-store"
 
-const WORKER_ID = `worker-${process.pid}-${Date.now()}`
 const BASE_POLL_INTERVAL = 2000
 const MAX_POLL_INTERVAL = 30000
 const STALE_RECOVERY_INTERVAL = 30_000
-// The worker waits this long for PostgreSQL to become reachable at boot
-// (the Web service may still be migrating). After the cap the failure is
-// treated as unrecoverable and the process exits non-zero.
-const DB_WAIT_TIMEOUT_MS = 5 * 60 * 1000
+// How long the processor waits for PostgreSQL to become reachable before a
+// (re)start attempt is considered failed. Standalone mode exits non-zero;
+// internal mode retries — the HTTP server must never be taken down by it.
+// Overridable for tests/ops via CLINOT_WORKER_DB_WAIT_MS.
+const DB_WAIT_TIMEOUT_MS = Number(process.env.CLINOT_WORKER_DB_WAIT_MS) || 5 * 60 * 1000
 const DB_WAIT_RETRY_MS = 2000
 // The health endpoint reports the DB as unhealthy if no query succeeded
 // within this window. Polling touches the DB every few seconds, so a healthy
-// worker always refreshes this timestamp.
+// processor always refreshes this timestamp.
 const DB_HEALTH_WINDOW_MS = 60_000
 const SHUTDOWN_GRACE_MS = 30_000
+// Internal-mode startup failure retry interval (overridable for tests/ops).
+const INTERNAL_STARTUP_RETRY_MS = Number(process.env.CLINOT_WORKER_STARTUP_RETRY_MS) || 60_000
+
+const WORKER_ID = `worker-${process.pid}-${Date.now()}`
 
 let isShuttingDown = false
 let shutdownStarted = false
+let loopRunning = false
+let signalHandlersRegistered = false
 let lastStaleRecoveryAt = 0
 let lastDbOkAt = 0
 let consecutivePollErrors = 0
@@ -44,17 +50,17 @@ function errorMessage(err: unknown): string {
 }
 
 /**
- * Fail fast — with an unmistakable message — on configuration the worker
+ * Fail fast — with an unmistakable message — on configuration the processor
  * genuinely cannot run without. Web-only variables (JWT_SECRET, AI keys,
  * WhatsApp tokens, NEXT_PUBLIC_APP_URL) are intentionally NOT required:
  * credentials for AI/WhatsApp are resolved per job, and a missing credential
- * fails that job with retries, not the worker process.
+ * fails that job with retries, not the processor.
  */
 function requireWorkerEnv(): void {
   const databaseUrl = process.env.DATABASE_URL?.trim()
   if (!databaseUrl) {
     throw new Error(
-      "[WORKER] FATAL: DATABASE_URL is not set. The worker shares the Web service's PostgreSQL database — set the same DATABASE_URL on the worker service."
+      "[WORKER] FATAL: DATABASE_URL is not set. The job processor requires the application's PostgreSQL connection string."
     )
   }
   // Never log the URL itself — only validate its shape.
@@ -71,6 +77,7 @@ export function getHealthSnapshot() {
     status: dbOk ? "healthy" : "degraded",
     role: "worker",
     workerId: WORKER_ID,
+    running: loopRunning,
     database: dbOk ? "ok" : "unreachable",
     activeJobs,
     consecutivePollErrors,
@@ -79,7 +86,7 @@ export function getHealthSnapshot() {
   }
 }
 
-async function processJob(job: any): Promise<void> {
+export async function processJob(job: any): Promise<void> {
   const startTime = Date.now()
   activeJobs++
   try {
@@ -177,7 +184,7 @@ async function processJob(job: any): Promise<void> {
       durationMs: Date.now() - startTime,
     })
   } catch (error: any) {
-    // One failed job must never kill the worker: record the failure for the
+    // One failed job must never kill the processor: record the failure for the
     // queue's retry policy, then re-throw so the caller logs and continues.
     logger.error("[JOB] Failed", {
       jobId: job.id,
@@ -210,7 +217,7 @@ async function processJob(job: any): Promise<void> {
   }
 }
 
-async function processJobs() {
+export async function processJobs() {
   if (isShuttingDown) return
 
   // Periodically recover jobs stuck in PROCESSING from a dead worker so they
@@ -224,7 +231,7 @@ async function processJobs() {
         logger.warn("[WORKER] Recovered stale PROCESSING jobs", { recovered })
       }
     } catch (error: any) {
-      logger.error("[WORKER] Stale job recovery failed — worker will continue", {
+      logger.error("[WORKER] Stale job recovery failed — processor will continue", {
         error: error?.message,
       })
     }
@@ -240,14 +247,14 @@ async function processJobs() {
       if (isShuttingDown) break
 
       const claimed = await claimJob(job.id, WORKER_ID)
-      if (!claimed.success) continue // another worker got it first
+      if (!claimed.success) continue // another processor got it first
 
       logger.info(`[JOB] Claimed ${job.id} (${job.type})`)
       try {
         await processJob(claimed.job!)
       } catch (error: any) {
         // Already logged + recorded in processJob. The loop continues.
-        logger.error(`[JOB] Job execution error for ${job.id} — worker continues`, {
+        logger.error(`[JOB] Job execution error for ${job.id} — processor continues`, {
           jobId: job.id,
           error: error?.message,
         })
@@ -255,9 +262,9 @@ async function processJobs() {
     }
   } catch (error: any) {
     consecutivePollErrors++
-    // Transient database/network problems must never kill the worker —
+    // Transient database/network problems must never kill the processor —
     // log, back off, and try again on the next poll.
-    logger.error("[WORKER] Polling error — worker will continue", {
+    logger.error("[WORKER] Polling error — processor will continue", {
       error: error instanceof Error ? error.message : String(error),
       consecutivePollErrors,
     })
@@ -286,9 +293,9 @@ function startHealthServer() {
         }
       })
       // A port conflict or platform hiccup must degrade the health endpoint,
-      // not kill the worker loop.
+      // not kill the processor loop.
       server.on("error", (err: any) => {
-        logger.error("[WORKER] Health server error — worker continues without health endpoint", {
+        logger.error("[WORKER] Health server error — processor continues without health endpoint", {
           error: err?.message,
         })
       })
@@ -298,7 +305,7 @@ function startHealthServer() {
       })
     })
   } catch (err: any) {
-    logger.error("[WORKER] Could not start health server — worker continues", {
+    logger.error("[WORKER] Could not start health server — processor continues", {
       error: err?.message,
     })
   }
@@ -329,7 +336,28 @@ async function verifyDatabaseConnection(): Promise<void> {
   }
 }
 
-async function shutdown(signal: string, exitCode: number): Promise<void> {
+/**
+ * Stop claiming new jobs and wait (bounded) for in-flight jobs to finish.
+ * Does NOT exit the process and does NOT disconnect Prisma — safe to call
+ * from inside a web server process and from tests.
+ */
+export async function stopJobProcessor(): Promise<void> {
+  isShuttingDown = true
+  const deadline = Date.now() + SHUTDOWN_GRACE_MS
+  while (activeJobs > 0 && Date.now() < deadline) {
+    await sleep(50)
+  }
+  loopRunning = false
+}
+
+/**
+ * Process-level shutdown (SIGTERM/SIGINT): drain jobs, close resources, exit.
+ * In internal mode this is the whole application shutting down — draining
+ * first lets in-flight jobs finish instead of stranding them in PROCESSING
+ * (they would still be stale-recovered after a restart, but draining is
+ * cleaner).
+ */
+async function processShutdown(signal: string): Promise<void> {
   if (shutdownStarted) return
   shutdownStarted = true
   isShuttingDown = true
@@ -353,74 +381,160 @@ async function shutdown(signal: string, exitCode: number): Promise<void> {
   } catch {
     // ignore — we are exiting anyway
   }
-  process.exit(exitCode)
+  process.exit(0)
 }
 
-async function startWorker() {
-  logger.info("[WORKER] Starting Clinot background worker...", { workerId: WORKER_ID, pid: process.pid })
+function registerSignalHandlers() {
+  if (signalHandlersRegistered) return
+  signalHandlersRegistered = true
+  process.on("SIGTERM", () => void processShutdown("SIGTERM"))
+  process.on("SIGINT", () => void processShutdown("SIGINT"))
+}
 
-  // 1. Validate required environment (fail fast, clear message)
-  requireWorkerEnv()
-  logger.info("[WORKER] Environment validated")
+export interface StartWorkerOptions {
+  /**
+   * "standalone": dedicated worker process — owns its health server,
+   * crash handlers, and exits non-zero on unrecoverable startup failure.
+   * "internal": runs inside the Next.js web server process — never blocks or
+   * terminates HTTP serving; startup failures are retried periodically.
+   */
+  mode?: "internal" | "standalone"
+  pollIntervalMs?: number
+}
 
-  // 2. Wait for PostgreSQL (the Web service may still be applying migrations)
-  logger.info("[WORKER] Connecting to PostgreSQL...")
-  await verifyDatabaseConnection()
+/**
+ * Start the job processor. Exactly ONE instance runs per process — repeated
+ * calls are no-ops that log a warning (no duplicate polling loops).
+ * Resolves when the polling loop exits (after stopJobProcessor/shutdown).
+ */
+export async function startWorker(options: StartWorkerOptions = {}): Promise<void> {
+  const mode = options.mode ?? "standalone"
+  const pollIntervalMs = options.pollIntervalMs ?? BASE_POLL_INTERVAL
 
-  logger.info("[WORKER] Worker initialized")
-
-  // 3. Health endpoint (independent of the job loop; never kills the worker)
-  startHealthServer()
-
-  // 4. Process safety handlers to prevent crash loops on stray async errors
-  process.on("uncaughtException", (err) => {
-    logger.error("[WORKER] Uncaught exception in worker process (continuing):", {
-      error: err.message,
-      stack: err.stack,
+  if (loopRunning) {
+    logger.warn("[WORKER] Job processor already running in this process — not starting a duplicate", {
+      workerId: WORKER_ID,
     })
-  })
-
-  process.on("unhandledRejection", (reason) => {
-    logger.error("[WORKER] Unhandled rejection in worker process (continuing):", {
-      reason: String(reason),
-    })
-  })
-
-  // 5. Graceful shutdown — drain active jobs, close resources, exit cleanly
-  process.on("SIGTERM", () => void shutdown("SIGTERM", 0))
-  process.on("SIGINT", () => void shutdown("SIGINT", 0))
-
-  logger.info("[WORKER] Polling for jobs...", { baseIntervalMs: BASE_POLL_INTERVAL })
-
-  // 6. Continuous polling loop with error backoff — runs forever until a
-  //    shutdown signal arrives.
-  while (!isShuttingDown) {
-    await processJobs()
-    const interval =
-      consecutivePollErrors > 0
-        ? Math.min(BASE_POLL_INTERVAL * Math.pow(2, consecutivePollErrors), MAX_POLL_INTERVAL)
-        : BASE_POLL_INTERVAL
-    await sleep(interval)
+    return
   }
-}
+  loopRunning = true
+  isShuttingDown = false
+  shutdownStarted = false
 
-export { startWorker, processJobs, processJob }
+  try {
+    logger.info(`[WORKER] Starting Clinot background job processor (${mode})...`, {
+      workerId: WORKER_ID,
+      pid: process.pid,
+    })
 
-// ─── Entry Point ───────────────────────────────────────────────────────────────
-// Automatically run startWorker() in non-test runtime environments
-const isTestEnv =
-  process.env.NODE_ENV === "test" ||
-  process.env.VITEST === "true" ||
-  typeof (globalThis as any).describe === "function"
+    // 1. Validate required environment (clear message, fail fast)
+    requireWorkerEnv()
+    logger.info("[WORKER] Environment validated")
 
-if (!isTestEnv) {
-  startWorker().catch(async (err) => {
-    logger.error("[WORKER] Fatal error in worker startup:", { error: err.message })
+    // 2. Wait for PostgreSQL (bounded; caller decides failure behavior)
+    logger.info("[WORKER] Connecting to PostgreSQL...")
+    await verifyDatabaseConnection()
+
+    logger.info("[WORKER] Job processor initialized")
+
+    if (mode === "standalone") {
+      // Dedicated process extras: embedded health endpoint + crash-proofing.
+      // Internal mode skips these: the web service owns /api/health and the
+      // platform owns process-level crash handling.
+      startHealthServer()
+      process.on("uncaughtException", (err) => {
+        logger.error("[WORKER] Uncaught exception in worker process (continuing):", {
+          error: err.message,
+          stack: err.stack,
+        })
+      })
+      process.on("unhandledRejection", (reason) => {
+        logger.error("[WORKER] Unhandled rejection in worker process (continuing):", {
+          reason: String(reason),
+        })
+      })
+    }
+
+    // 3. Graceful shutdown on platform signals (both modes)
+    registerSignalHandlers()
+
+    logger.info("[WORKER] Polling for jobs...", { baseIntervalMs: pollIntervalMs })
+
+    // 4. Continuous polling loop with error backoff — runs until shutdown.
+    while (!isShuttingDown) {
+      await processJobs()
+      const interval =
+        consecutivePollErrors > 0
+          ? Math.min(pollIntervalMs * Math.pow(2, consecutivePollErrors), MAX_POLL_INTERVAL)
+          : pollIntervalMs
+      await sleep(interval)
+    }
+
+    logger.info("[WORKER] Polling loop exited")
+    loopRunning = false
+  } catch (err: any) {
+    loopRunning = false
+    if (mode === "internal") {
+      // NEVER take the HTTP server down for a processor startup failure —
+      // log loudly and retry periodically until the environment recovers.
+      logger.error(
+        `[WORKER] Internal job processor startup failed — will retry in ${INTERNAL_STARTUP_RETRY_MS / 1000}s (HTTP server is unaffected)`,
+        { error: err?.message }
+      )
+      const retry = setTimeout(() => {
+        if (!loopRunning && !isShuttingDown) {
+          void startWorker({ mode: "internal", pollIntervalMs })
+        }
+      }, INTERNAL_STARTUP_RETRY_MS)
+      retry.unref?.()
+      return
+    }
+    logger.error("[WORKER] Fatal error in worker startup:", { error: err?.message })
     try {
       await prisma.$disconnect()
     } catch {
       // ignore
     }
     process.exit(1)
-  })
+  }
+}
+
+/**
+ * Entry point for the integrated (single web service) architecture.
+ * Called from src/instrumentation.ts when the Next.js server boots.
+ * Fire-and-forget by design: the HTTP server is never blocked.
+ */
+export function startInternalJobProcessor(): void {
+  if (process.env.NEXT_RUNTIME && process.env.NEXT_RUNTIME !== "nodejs") return
+  if (process.env.CLINOT_DISABLE_INTERNAL_WORKER === "true") {
+    logger.info("[WORKER] CLINOT_DISABLE_INTERNAL_WORKER=true — internal job processor disabled")
+    return
+  }
+  // A dedicated standalone worker deployment owns job processing; do not
+  // create a second polling loop alongside it.
+  if (process.env.WORKER_MODE === "true") {
+    logger.info("[WORKER] WORKER_MODE=true — dedicated worker handles jobs; internal processor skipped")
+    return
+  }
+  const isTestEnv =
+    process.env.NODE_ENV === "test" ||
+    process.env.VITEST === "true" ||
+    typeof (globalThis as any).describe === "function"
+  if (isTestEnv) return
+
+  void startWorker({ mode: "internal" })
+}
+
+// ─── Standalone Entry Point ────────────────────────────────────────────────────
+// `npm run worker` runs this module directly as a dedicated worker process.
+// Normal deployments do NOT use this path — the web server starts the
+// internal processor via instrumentation. Kept for explicit standalone
+// deployments and local debugging.
+const isTestEnv =
+  process.env.NODE_ENV === "test" ||
+  process.env.VITEST === "true" ||
+  typeof (globalThis as any).describe === "function"
+
+if (!isTestEnv) {
+  void startWorker({ mode: "standalone" })
 }
