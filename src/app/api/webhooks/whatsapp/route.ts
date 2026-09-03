@@ -6,6 +6,7 @@ import { canProcessMessaging } from "@/lib/billing"
 import { logger } from "@/lib/logger"
 import { timingSafeEqual, verifySignature, getWebhookSecret, getAppSecret } from "@/lib/webhook-utils"
 import { createJob } from "@/lib/jobs/queue"
+import { updateLastMessageAt } from "@/integrations/whatsapp-phone-repo"
 
 export async function GET(req: NextRequest) {
   try {
@@ -122,17 +123,26 @@ export async function POST(req: NextRequest) {
       })
 
       // Update 24-hour window tracking on inbound patient message.
-      // The schema's unique key on WhatsAppPhoneNumber is the compound
-      // (clinicId, phoneNumberId) — phoneNumberId alone is NOT unique.
-      // We use the compound key here so the update is correctly scoped
-      // to a single clinic's phone record, preserving multi-tenant
-      // isolation.
+      //
+      // The schema's unique key on WhatsAppPhoneNumber is the COMPOUND
+      // (clinicId, phoneNumberId) — phoneNumberId alone is NOT a unique
+      // selector. The typed wrapper in @/integrations/whatsapp-phone-repo
+      // requires both clinicId and phoneNumberId at the call site, which
+      // makes the wrong shape impossible at compile time. A previous
+      // production incident was caused by `where: { phoneNumberId } as
+      // any` — the cast hid the type error and the runtime error was
+      // `WhatsAppPhoneNumberWhereUniqueInput needs at least one of id
+      // or clinicId_phoneNumberId`. That exact bug cannot recur
+      // because this code does not call prisma.whatsAppPhoneNumber.update
+      // directly; it goes through updateLastMessageAt() which has
+      // clinicId as a required parameter.
       if (msg.from && phoneNumberId && clinicId) {
         try {
-          await prisma.whatsAppPhoneNumber.update({
-            where: { clinicId_phoneNumberId: { clinicId, phoneNumberId } },
-            data: { lastMessageAt: new Date(parseInt(msg.timestamp) * 1000) },
-          })
+          await updateLastMessageAt(
+            clinicId,
+            phoneNumberId,
+            new Date(parseInt(msg.timestamp) * 1000),
+          )
         } catch (err) {
           // P2025 = record not found. This can happen if the phone record
           // was deleted between resolution and update. Log and continue —

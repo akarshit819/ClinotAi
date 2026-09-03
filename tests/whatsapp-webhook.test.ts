@@ -170,4 +170,40 @@ describeMaybe("WhatsApp webhook + phone record update (real PostgreSQL)", () => 
       }),
     ).rejects.toThrow()
   }, 15_000)
+
+  it("STATIC GUARD: webhook route imports the typed wrapper and does NOT call prisma.whatsAppPhoneNumber.update directly", async () => {
+    // This is a SOURCE-LEVEL guard against the production incident
+    // recurring. The webhook must use updateLastMessageAt() from
+    // @/integrations/whatsapp-phone-repo (which requires clinicId at
+    // the type level), not a direct prisma.whatsAppPhoneNumber.update
+    // call.
+    //
+    // If a future change reintroduces the direct prisma call with the
+    // wrong where-clause, this test will fail and the bug will be
+    // caught at PR-review time, not at 3 AM in production.
+    const fs = await import("fs")
+    const path = await import("path")
+    const routePath = path.join(
+      process.cwd(),
+      "src",
+      "app",
+      "api",
+      "webhooks",
+      "whatsapp",
+      "route.ts",
+    )
+    const src = fs.readFileSync(routePath, "utf8")
+
+    // 1. The typed wrapper must be imported.
+    expect(src).toMatch(/from\s+["']@\/integrations\/whatsapp-phone-repo["']/)
+
+    // 2. The wrapper must be called for the lastMessageAt update.
+    expect(src).toMatch(/updateLastMessageAt\s*\(/)
+
+    // 3. No direct prisma.whatsAppPhoneNumber.update call in the route.
+    expect(src).not.toMatch(/prisma\.whatsAppPhoneNumber\.update\s*\(/)
+
+    // 4. No `as any` cast on any whatsAppPhoneNumber where-clause.
+    expect(src).not.toMatch(/phoneNumberId[^}]*as\s+any/)
+  }, 5_000)
 })
