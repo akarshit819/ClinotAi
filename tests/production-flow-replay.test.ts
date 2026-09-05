@@ -248,9 +248,12 @@ beforeEach(() => {
 describe("AI-path inputs reach the provider and the AI response reaches WhatsApp", () => {
   const aiInputs = [
     "hello",
+    "I have knee pain",
     "I have stomach pain",
     "I have back pain for two days",
     "I have headache and back pain",
+    "What is you",
+    "What are you",
     "I want teeth whitening",
     "Where are you located?",
     "What are your opening hours?",
@@ -337,11 +340,13 @@ describe("Fallback contract", () => {
   it("provider failure → scripted fallback (observable), AI response absent", async () => {
     openaiState.failNext = true
     const { outbound, aiCallsBefore } = await turn("I have stomach pain", 1)
-    // The provider WAS attempted.
-    expect(aiCallsDuringTurn(aiCallsBefore)).toBe(0) // threw before recording
-    // Response is the generic fallback, not an AI reply.
+    // The provider WAS attempted (and threw before recording a call).
+    expect(aiCallsDuringTurn(aiCallsBefore)).toBe(0)
+    // Response is the intentional symptom fallback — useful, safe, and
+    // never an AI echo.
     expect(outbound).not.toContain("AI_REPLY:")
-    expect(outbound).toContain("Demo Clinic")
+    expect(outbound).toContain("can't give medical advice")
+    expect(outbound).toContain("book an appointment")
   })
 
   it("provider not configured → AI skipped, fallback used (AI_PROVIDER_NOT_CONFIGURED)", async () => {
@@ -350,6 +355,7 @@ describe("Fallback contract", () => {
     const { outbound } = await turn("I have stomach pain", 1)
     expect(openaiState.calls.length).toBe(0)
     expect(outbound).not.toContain("AI_REPLY:")
-    expect(outbound).toContain("Demo Clinic")
+    expect(outbound).toContain("can't give medical advice")
+    expect(outbound).toContain("book an appointment")
   })
 })

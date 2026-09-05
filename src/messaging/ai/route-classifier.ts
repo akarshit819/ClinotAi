@@ -475,7 +475,8 @@ function hasTimeIntent(text: string): boolean {
 // === Logging helper =====================================================
 
 export function logRouteDecision(decision: RouteDecision, conversationId: string, clinicId: string): void {
-  logger.info("[ROUTE] decision", {
+  logger.info("[CLINOT_AI_TRACE]", {
+    stage: "router",
     conversationId,
     clinicId,
     route: decision.route,

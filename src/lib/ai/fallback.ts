@@ -51,6 +51,19 @@ export async function generateFallbackResponse(params: FallbackParams): Promise<
     return `I understand this may be urgent. Please contact our clinic immediately at **${clinic?.emergencyPhone || "your clinic's emergency number"}**. For life-threatening emergencies, please call 911. Would you like me to alert our team that you're on your way?`
   }
 
+  // Symptom disclosure with no explicit booking words ("I have knee
+  // pain", "my tooth hurts", "I feel sick"). This branch guarantees a
+  // USEFUL, safe response even when the AI provider is unavailable —
+  // a symptom message must never fall through to the generic "I'm
+  // not sure I have the exact information" reply. It deliberately
+  // makes no diagnosis and offers the two correct next steps.
+  if (
+    /\b(pain|pains|hurts?|aching?|aches?|sore|swelling|swollen|fever|feeling\s+sick|feel\s+sick|nausea|dizzy|bleeding|symptom|discomfort|injur(?:y|ed)|stiff)\b/i.test(lower) ||
+    /\b(my|the)\s+(head|tooth|teeth|gums?|jaw|back|neck|shoulder|knee|elbow|hand|finger|hip|leg|foot|feet|ear|throat|stomach|chest)\b/i.test(lower)
+  ) {
+    return `I'm sorry to hear you're dealing with that — our team wants to help. While I can't give medical advice myself, our clinicians can properly evaluate what's going on. Would you like me to book an appointment for you? If it's urgent, please call us at **${clinic?.emergencyPhone || phone || "the clinic"}** right away.`
+  }
+
   if (/\b(book|appointment|schedule|reschedule|cancel|visit|see\s*(a\s*)?doctor|checkup|cleaning|consult)\b/i.test(lower)) {
     return `I'd be happy to help you schedule a visit! Could you please provide your full name, phone number, reason for your visit, and a preferred date and time? I'll send this to our team for confirmation.`
   }

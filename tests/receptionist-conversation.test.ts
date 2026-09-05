@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, vi } from "vitest"
 import { validateInput } from "../src/lib/ai/guardrails"
 import { classifyRoute } from "../src/messaging/ai/route-classifier"
 import {
@@ -87,6 +87,60 @@ describe("Clinot Receptionist Conversation Quality & Routing Tests", () => {
     const res = validateInput("fuck this stupid app")
     expect(res.passed).toBe(false)
     expect(res.action).toBe("abuse")
+  })
+
+  // Test 9b: PRODUCTION TRANSCRIPT REGRESSION — "What is you" was
+  // hard-rejected by the old gibberish heuristic (any 8+ letter text
+  // with >80% unique letters scored 0.8) and never reached the AI.
+  // "What are you" — a core receptionist question — was equally
+  // blocked. Natural short messages MUST reach the AI.
+  it("Test 9b: natural short messages pass guardrails and reach the AI", () => {
+    for (const msg of ["What is you", "What are you", "hi", "hello", "How much?", "help"]) {
+      const res = validateInput(msg)
+      expect(res.passed, `"${msg}" must pass guardrails (got ${res.action})`).toBe(true)
+    }
+  })
+
+  it("Test 9c: gibberish detection is deterministic and still catches real mash", () => {
+    // Real keyboard mash / garbage is still rejected.
+    expect(validateInput("aaaaaaaa").action).toBe("invalid")
+    expect(validateInput("xkcdtzvqm").action).toBe("invalid")
+    // Determinism: same input, same result, every time.
+    for (let i = 0; i < 10; i++) {
+      expect(validateInput("What is you").action).toBe("allow")
+      expect(validateInput("aaaaaaaa").action).toBe("invalid")
+    }
+  })
+
+  // Test 9d: the symptom-aware fallback guarantees a USEFUL response
+  // when the AI provider is unavailable — never the generic
+  // "I'm not sure I have the exact information" reply.
+  it("Test 9d: symptom messages get an intentional symptom fallback, not the generic one", async () => {
+    const { generateFallbackResponse } = await import("../src/lib/ai/fallback")
+    const { prisma } = await import("../src/lib/db")
+    const clinicSpy = vi.spyOn(prisma.clinic, "findUnique").mockResolvedValue({
+      id: "clinic-1",
+      name: "Demo Clinic",
+      phone: "+15550000000",
+      emergencyPhone: "+15559999999",
+      address: "1 Clinic Road",
+      openingHours: "Mon-Fri 9-5",
+    } as any)
+    const kbSpy = vi.spyOn(prisma.knowledgeBase, "findMany").mockResolvedValue([] as any)
+    const faqSpy = vi.spyOn(prisma.fAQ, "findMany").mockResolvedValue([] as any)
+
+    try {
+      for (const msg of ["I have knee pain", "my tooth hurts", "I feel sick", "I have back pain for two days"]) {
+        const response = await generateFallbackResponse({ userMessage: msg, clinicId: "clinic-1" })
+        expect(response, '"' + msg + '" must not get the generic fallback').not.toContain("not sure I have the exact information")
+        expect(response).toContain("book an appointment")
+        expect(response).toContain("can't give medical advice")
+      }
+    } finally {
+      clinicSpy.mockRestore()
+      kbSpy.mockRestore()
+      faqSpy.mockRestore()
+    }
   })
 
   // Test 10: Flow cancellation during active draft

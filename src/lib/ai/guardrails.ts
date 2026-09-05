@@ -58,21 +58,34 @@ export interface GuardrailResult {
   confidence: number
 }
 
-function gibberishScore(text: string): number {
+export function gibberishScore(text: string): number {
   const cleaned = text.replace(/\s+/g, "").toLowerCase()
   if (cleaned.length < 4) return 0
 
+  // Repeated single characters ("aaaaaaa", "!!!!!") — strong garbage
+  // signal. A run of 5+ of the same char is 0.7 (above the 0.6
+  // rejection threshold on its own).
   const repeatedChars = cleaned.match(/(.)\1{4,}/g)
-  const repeatedScore = repeatedChars ? repeatedChars.length * 0.3 : 0
+  const repeatedScore = repeatedChars ? repeatedChars.length * 0.7 : 0
 
-  const randomKeyboard = cleaned.match(/[asdfghjkl;'qwertyuiop\[\]zxcvbnm,.\/]{8,}/gi)
-  const keyboardScore = randomKeyboard ? 0.5 : 0
+  // Vowel-less alphabetic strings of 8+ chars ("xkcdtzvqm") — real
+  // keyboard mash almost never contains normal vowel distribution.
+  // Normal English NEVER trips this ("whatisyou" has 4/9 vowels).
+  //
+  // The previous heuristic (keyboard-row run >= 8 + unique-letter
+  // ratio > 0.8) was fundamentally broken: the "keyboard" character
+  // class is the entire alphabet, so every 8+ letter word matched it,
+  // and normal English text reliably has a >0.8 unique-letter ratio —
+  // meaning "What is you" / "What are you" (real receptionist
+  // questions!) scored 0.8 and were hard-rejected before the AI ran.
+  const letters = cleaned.replace(/[^a-z]/g, "")
+  let vowellessScore = 0
+  if (letters.length >= 8) {
+    const vowels = (letters.match(/[aeiou]/g) || []).length
+    if (vowels / letters.length < 0.1) vowellessScore = 0.7
+  }
 
-  const uniqueChars = new Set(cleaned).size
-  const uniqueRatio = uniqueChars / cleaned.length
-  const gibberishRatio = uniqueRatio > 0.8 ? 0.3 : 0
-
-  return Math.min(1, repeatedScore + keyboardScore + gibberishRatio)
+  return Math.min(1, repeatedScore + vowellessScore)
 }
 
 function isMostlyUppercase(text: string): boolean {
