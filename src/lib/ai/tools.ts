@@ -73,7 +73,13 @@ export async function executeToolCall(
   clinicId: string
 ): Promise<ToolResult> {
   const toolName = toolCall.name as AppointmentToolName
-  const tool = (await import("@/lib/appointment/tools")).APPOINTMENT_TOOLS[toolName]
+  // Relative (not "@/...") on purpose: this module is loaded in the
+  // production launcher's in-process worker via tsx, where a dynamic
+  // import() performs native ESM resolution and cannot resolve the
+  // "@" tsconfig alias (production failure: "Cannot find package
+  // '@/lib' imported from .../src/lib/ai/tools.ts"). Webpack resolves
+  // relative dynamic imports identically, so builds are unaffected.
+  const tool = (await import("../appointment/tools")).APPOINTMENT_TOOLS[toolName]
 
   if (!tool) {
     return {
@@ -108,7 +114,8 @@ export async function executeToolCall(
 }
 
 export async function buildToolDefinitions(): Promise<any[]> {
-  const { APPOINTMENT_TOOLS } = await import("@/lib/appointment/tools")
+  // Relative path — see the comment on executeToolCall above.
+  const { APPOINTMENT_TOOLS } = await import("../appointment/tools")
   return Object.values(APPOINTMENT_TOOLS).map(t => ({
     type: "function",
     function: {

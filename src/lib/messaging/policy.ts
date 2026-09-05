@@ -24,8 +24,11 @@ export async function evaluateMessagingPolicy(
 ): Promise<MessagePolicyDecision> {
   const { clinicId, phoneNumberId, messageType, templateName, templateLanguage, templateComponents, isAppointmentRelated } = context
 
-  // Check billing/feature gate first
-  const { canProcessMessaging } = await import("@/lib/billing")
+  // Check billing/feature gate first.
+  // Relative (not "@/...") on purpose: dynamic import() in the
+  // production launcher's in-process worker does native ESM
+  // resolution and cannot resolve the "@" tsconfig alias.
+  const { canProcessMessaging } = await import("../billing")
   const featureCheck = await canProcessMessaging(context.clinicId)
   if (!featureCheck.allowed) {
     return { allowed: false, reason: "billing_blocked" }
