@@ -134,7 +134,7 @@ export async function runAiReceptionist(
   context: Omit<PipelineContext, "aiResponse" | "intent" | "confidence" | "requiresClinic">,
   message: IncomingMessage,
   conversationHistory: ChatMessage[] = [],
-): Promise<{ response: string; intent: Intent; confidence: number; requiresClinic: boolean }> {
+): Promise<{ response: string; intent: Intent; confidence: number; requiresClinic: boolean; responseSource: "AI" | "APPOINTMENT" | "EMERGENCY" | "FALLBACK" | "SYSTEM" }> {
   const existingDraft = readDraftFromMetadata(context.conversation.metadata)
   const decision = classifyRoute(message.content, existingDraft)
   logRouteDecision(decision, context.conversation.id, context.clinicId)
@@ -155,6 +155,34 @@ export async function runAiReceptionist(
       intent: "emergency",
       confidence: 0.95,
       requiresClinic: true,
+      responseSource: "EMERGENCY",
+    }
+  }
+
+  // ========================================================================
+  // LEVEL 1.5: FLOW_CANCEL (Active draft cancelled by user)
+  // ========================================================================
+  if (decision.reason === "flow_cancel" && existingDraft && existingDraft.active) {
+    logger.info("[RECEPTIONIST] Flow cancel — clearing active appointment draft", {
+      conversationId: context.conversation.id,
+      clinicId: context.clinicId,
+    })
+    const cleared = clearDraft("user_cancelled")
+    await prisma.conversation.update({
+      where: { id: context.conversation.id },
+      data: {
+        metadata: updateContextState(
+          writeDraftToMetadata(context.conversation.metadata, cleared),
+          { currentTopic: "general", lastUserIntent: "flow_cancel" },
+        ),
+      },
+    })
+    return {
+      response: "No problem, I've cancelled that booking request. How else can I help you today?",
+      intent: "general_question",
+      confidence: 0.9,
+      requiresClinic: false,
+      responseSource: "APPOINTMENT",
     }
   }
 
@@ -189,6 +217,7 @@ export async function runAiReceptionist(
       intent: "appointment",
       confidence: 0.95,
       requiresClinic: false,
+      responseSource: "APPOINTMENT",
     }
   }
 
@@ -221,15 +250,16 @@ export async function runAiReceptionist(
       // All required fields collected. Hand off to the AI to do
       // the actual booking.
       const aiResult = await bookAppointmentViaAi(context, turn.draft, conversationHistory)
-      // Persist the (now-collected) draft until booking actually
-      // succeeds; we clear it only after a successful tool result.
-      // contextState notes the booking is ready/attempted.
+      // Booking attempted — clear the draft so the next message
+      // is treated as a fresh conversation, not a continuation of
+      // the appointment flow.
+      const clearedDraft = clearDraft("completed")
       await prisma.conversation.update({
         where: { id: context.conversation.id },
         data: {
           metadata: updateContextState(
-            writeDraftToMetadata(context.conversation.metadata, turn.draft),
-            { currentTopic: "appointment", lastUserIntent: "booking_ready" },
+            writeDraftToMetadata(context.conversation.metadata, clearedDraft),
+            { currentTopic: "appointment", lastUserIntent: "booking_confirmed" },
           ),
           intent: "appointment",
           isEmergency: false,
@@ -242,6 +272,7 @@ export async function runAiReceptionist(
         intent: "appointment",
         confidence: 0.95,
         requiresClinic: aiResult.requiresClinic,
+        responseSource: "AI",
       }
     }
 
@@ -266,6 +297,7 @@ export async function runAiReceptionist(
       intent: "appointment",
       confidence: 0.95,
       requiresClinic: false,
+      responseSource: "APPOINTMENT",
     }
   }
 
@@ -322,6 +354,7 @@ export async function runAiReceptionist(
       intent: "general_question",
       confidence: 0.7,
       requiresClinic: false,
+      responseSource: aiResult.response ? "AI" : "FALLBACK",
     }
   }
 
@@ -368,8 +401,9 @@ export async function runAiReceptionist(
     { prebuiltMessages: messages },
   )
 
+  const hadAiResponse = Boolean(aiResult.response && aiResult.response.trim())
   let response = aiResult.response
-  if (!response || !response.trim()) {
+  if (!hadAiResponse) {
     // Empty AI response. Do NOT pretend an appointment is being
     // started. Fall back to a generic clarification.
     response = "I'm here to help with appointments and clinic questions. Could you please provide more details?"
@@ -381,11 +415,19 @@ export async function runAiReceptionist(
     data: { metadata: nextMetadata },
   })
 
+  logger.info("[RECEPTIONIST] Response dispatched", {
+    conversationId: context.conversation.id,
+    clinicId: context.clinicId,
+    route: decision.route,
+    responseSource: hadAiResponse ? "AI" : "FALLBACK",
+  })
+
   return {
     response,
     intent: intentForLogging,
     confidence: 0.7,
     requiresClinic: false,
+    responseSource: hadAiResponse ? "AI" : "FALLBACK",
   }
 }
 

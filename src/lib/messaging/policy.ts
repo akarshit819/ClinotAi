@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db"
 import { logger } from "@/lib/logger"
+import { canProcessMessaging } from "@/lib/billing/feature-check"
 
 const CUSTOMER_SERVICE_WINDOW_HOURS = 24
 
@@ -25,10 +26,6 @@ export async function evaluateMessagingPolicy(
   const { clinicId, phoneNumberId, messageType, templateName, templateLanguage, templateComponents, isAppointmentRelated } = context
 
   // Check billing/feature gate first.
-  // Relative (not "@/...") on purpose: dynamic import() in the
-  // production launcher's in-process worker does native ESM
-  // resolution and cannot resolve the "@" tsconfig alias.
-  const { canProcessMessaging } = await import("../billing")
   const featureCheck = await canProcessMessaging(context.clinicId)
   if (!featureCheck.allowed) {
     return { allowed: false, reason: "billing_blocked" }

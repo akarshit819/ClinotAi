@@ -158,7 +158,20 @@ vi.mock("@/lib/db", () => {
     subscription: {
       findFirst: vi.fn().mockResolvedValue({
         status: "active",
-        plan: { name: "Pro" },
+        plan: "pro",
+        currentPeriodEnd: new Date(Date.now() + 86400000 * 30),
+        cancelAtPeriodEnd: false,
+      }),
+    },
+    plan: {
+      findUnique: vi.fn().mockResolvedValue({
+        id: "plan-pro",
+        slug: "pro",
+        name: "Pro Plan",
+        price: 99,
+        interval: "month",
+        features: JSON.stringify({ messaging: true, whatsapp: true, ai: true }),
+        limits: JSON.stringify({ conversations: 1000 }),
       }),
     },
   }

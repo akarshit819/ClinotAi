@@ -115,12 +115,13 @@ const INSURANCE_PATTERNS: RegExp[] = [
 // We answer it normally and offer to book if appropriate.
 
 const SYMPTOM_PATTERNS: RegExp[] = [
-  new RegExp("\\b(i\\s+have|i've\\s+got|i\\s+am\\s+having|i\\s+am\\s+feeling|i'm\\s+having|i'm\\s+feeling)\\s+(a\\s+)?(headache|toothache|tooth\\s+pain|head\\s+ache|migraine|backache|stomachache)\\b", "i"),
-  new RegExp("\\b(my\\s+(head|tooth|teeth|gum|gums|jaw|back|ear|throat|stomach)\\s+(hurts?|ache|aches|pain))\\b", "i"),
-  new RegExp("\\b(i\\s+have\\s+(a\\s+)?(pain|ache|sore|swelling|fever|cough|cold|flu|nausea))\\b", "i"),
+  new RegExp("\\b(i\\s+have|i've\\s+got|i\\s+am\\s+having|i\\s+am\\s+feeling|i'm\\s+having|i'm\\s+feeling)\\s+(a\\s+)?(headache|toothache|tooth\\s+pain|head\\s+ache|migraine|backache|stomachache|back\\s+pain|neck\\s+pain|jaw\\s+pain|ear\\s+pain)\\b", "i"),
+  new RegExp("\\b(my\\s+(head|tooth|teeth|gum|gums|jaw|back|ear|throat|stomach|neck)\\s+(hurts?|ache|aches|pain))\\b", "i"),
+  new RegExp("\\b(i\\s+have\\s+(a\\s+)?([a-z]+\\s+)?(pain|ache|sore|swelling|fever|cough|cold|flu|nausea))\\b", "i"),
+  new RegExp("\\b(pain\\s+in\\s+(my\\s+)?(back|head|tooth|teeth|gum|gums|jaw|ear|throat|neck|stomach))\\b", "i"),
   new RegExp("\\b(i\\s+am\\s+feeling\\s+(sick|unwell|ill|nauseous|dizzy))\\b", "i"),
   new RegExp("\\b(my\\s+(gums|tooth|teeth)\\s+(are|is)\\s+(bleeding|swollen|hurting))\\b", "i"),
-  new RegExp("\\b(what\\s+(should\\s+i\\s+do|can\\s+i\\s+do|to\\s+do)\\s+(for|about)\\s+(a|my)\\s+(headache|toothache|pain|ache|fever|cold))\\b", "i"),
+  new RegExp("\\b(what\\s+(should\\s+i\\s+do|can\\s+i\\s+do|to\\s+do)\\s+(for|about)\\s+(a|my)\\s+(headache|toothache|pain|ache|fever|cold|back\\s+pain))\\b", "i"),
   new RegExp("\\b(i\\s+have\\s+swelling|i\\s+have\\s+bleeding|i\\s+have\\s+a\\s+problem\\s+with\\s+my\\s+teeth)\\b", "i"),
   new RegExp("\\b(do\\s+you\\s+treat|can\\s+you\\s+treat)\\b", "i"),
   new RegExp("\\b(i\\s+have\\s+(a\\s+)?problem\\s+with\\s+my\\s+teeth)\\b", "i"),
@@ -341,20 +342,24 @@ export function isSlotAnswerFor(
   const text = message.trim()
   if (!text) return false
 
+  const segments = /[\r\n,;]/.test(text)
+    ? text.split(/[\r\n,;]+/).map((s) => s.trim()).filter(Boolean)
+    : [text]
+
   switch (expectedField) {
     case "name":
-      return looksLikeNameAnswer(text)
+      return looksLikeNameAnswer(text) || segments.some((seg) => looksLikeNameAnswer(seg))
     case "phone":
-      return looksLikePhoneAnswer(text)
+      return looksLikePhoneAnswer(text) || segments.some((seg) => looksLikePhoneAnswer(seg))
     case "reason":
       // Reason is intentionally permissive — anything that doesn't
       // look like a date/time/phone/location and is at least a few
       // words can be a reason.
-      return looksLikeReasonAnswer(text)
+      return looksLikeReasonAnswer(text) || segments.some((seg) => looksLikeReasonAnswer(seg))
     case "date":
-      return hasDateIntent(text)
+      return hasDateIntent(text) || segments.some((seg) => hasDateIntent(seg))
     case "time":
-      return hasTimeIntent(text)
+      return hasTimeIntent(text) || segments.some((seg) => hasTimeIntent(seg))
     default:
       return false
   }

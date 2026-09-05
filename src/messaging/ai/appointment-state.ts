@@ -498,8 +498,7 @@ export function extractName(line: string): string | undefined {
 function extractReason(message: string, alreadyExtracted?: ExtractedFields): string | undefined {
   const extracted = alreadyExtracted || {}
   const segments = message
-    .split(/[\r\n;]+/)
-    .flatMap((line) => line.split(/,(?=\s)/))
+    .split(/[\r\n,;]+/)
     .map((s) => s.trim())
     .filter(Boolean)
   const reasonParts: string[] = []

@@ -14,8 +14,10 @@ const SPAM_PATTERNS = [
   /(https?:\/\/[^\s]+)/gi,
   /(www\.)[^\s]+/gi,
   /(buy|sell|cheap|discount|offer|limited|act\s*now|click\s*here)\s*(now|today|only)/gi,
-  /(\+?\d{1,3}[-.\s]?){3,}/g,
-  /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+  // NOTE: Phone numbers and email addresses are intentionally NOT blocked here.
+  // Patients legitimately provide their phone and email when booking appointments.
+  // The old patterns (/(\+?\d{1,3}[-.\s]?){3,}/ and email regex) have been removed
+  // because they caused every appointment slot-answer to be rejected as "spam".
   /(free|win|winner|cash|prize|lottery|jackpot)/gi,
   /[!?]{4,}/g,
 ]
@@ -107,7 +109,7 @@ export function validateInput(text: string): GuardrailResult {
     return { passed: false, action: "spam", confidence: 0.9 }
   }
 
-  if (checkAbuse(trimmed) || isMostlyUppercase(trimmed)) {
+  if (checkAbuse(trimmed)) {
     return {
       passed: false,
       action: "abuse",

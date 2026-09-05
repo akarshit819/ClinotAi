@@ -3,15 +3,15 @@ import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/db"
 import { parseInstagramIncoming } from "@/integrations/instagram"
 import { logger } from "@/lib/logger"
-import { timingSafeEqual, verifySignature } from "@/lib/webhook-utils"
+import { timingSafeEqual, verifySignature, requireEnv } from "@/lib/webhook-utils"
 
-function requireEnv(name: string): string {
-  return requireEnv("META_APP_SECRET")
-}
 
 export async function GET(req: NextRequest) {
   try {
-    const verifyToken = requireEnv("META_WEBHOOK_SECRET")
+    const verifyToken = process.env.META_WEBHOOK_SECRET
+    if (!verifyToken) {
+      return new NextResponse("Server configuration error", { status: 500 })
+    }
     const { searchParams } = new URL(req.url)
     const mode = searchParams.get("hub.mode")
     const token = searchParams.get("hub.verify_token")

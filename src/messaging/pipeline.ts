@@ -231,6 +231,14 @@ export async function processIncomingMessage(
 
   const aiResult = await runAiReceptionist(pipelineCtx, message, historyForAI)
 
+  logger.info("[PIPELINE] Receptionist response ready", {
+    conversationId: conversation.id,
+    clinicId,
+    responseSource: aiResult.responseSource,
+    intent: aiResult.intent,
+    requiresClinic: aiResult.requiresClinic,
+  })
+
   // Always store the AI response (even if empty — for audit trail)
   const outgoing: IncomingMessage = {
     platform: message.platform,
