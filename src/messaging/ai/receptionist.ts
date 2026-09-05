@@ -420,6 +420,7 @@ export async function runAiReceptionist(
     clinicId: context.clinicId,
     route: decision.route,
     responseSource: hadAiResponse ? "AI" : "FALLBACK",
+    fallbackReason: (aiResult as { fallbackReason?: string }).fallbackReason,
   })
 
   return {

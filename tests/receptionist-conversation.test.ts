@@ -124,3 +124,51 @@ describe("Clinot Receptionist Conversation Quality & Routing Tests", () => {
     expect(extracted.preferredDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
   })
 })
+
+describe("Guardrail determinism regression (stateful /g regex bug)", () => {
+  // The booking prompt the receptionist sends to the AI contains the
+  // word "folloWINg". The old prize-spam pattern /(free|win|...)/gi had
+  // NO word boundaries, so "following" matched as spam and the AI
+  // booking call was rejected by our own guardrails. The /g flag also
+  // made regexes STATEFUL (lastIndex persists across .test() calls),
+  // so detection depended on how many messages had been validated
+  // before — the same text could pass and fail nondeterministically.
+  const bookingPrompt = [
+    "The patient has confirmed the following booking details. Please call book_appointment now with these exact values; do NOT ask any more questions.",
+    "Name: Akarshit",
+    "Phone: 870087940",
+    "Reason: Pain",
+    "Preferred date: 2026-09-06",
+    "Preferred time: 16:00",
+  ].join("\n")
+
+  it("booking prompt containing 'following' is NOT spam", () => {
+    const r = validateInput(bookingPrompt)
+    expect(r.action).not.toBe("spam")
+    expect(r.passed).toBe(true)
+  })
+
+  it("spam detection is deterministic across repeated calls (same input, same result)", () => {
+    for (let i = 0; i < 10; i++) {
+      expect(validateInput(bookingPrompt).action).not.toBe("spam")
+      expect(validateInput("click here now to win a free prize").action).toBe("spam")
+      expect(validateInput(bookingPrompt).action).not.toBe("spam")
+    }
+  })
+
+  it("genuine spam is still blocked after adding word boundaries", () => {
+    // Blocked = !passed (action may be "spam" or "invalid" depending on
+    // which guard fires first — the contract is that it is blocked).
+    expect(validateInput("click here now").passed).toBe(false)
+    expect(validateInput("win a free cash prize").action).toBe("spam")
+    expect(validateInput("visit https://spam.example.com now").action).toBe("spam")
+    expect(validateInput("free lottery jackpot winner").action).toBe("spam")
+    expect(validateInput("This is great!!!!").action).toBe("spam")
+  })
+
+  it("words that merely CONTAIN spam substrings are not blocked", () => {
+    expect(validateInput("The doctor is following up on my treatment").passed).toBe(true)
+    expect(validateInput("I need a window appointment on Monday").passed).toBe(true)
+    expect(validateInput("Can I sell my old glasses at the clinic?").passed).toBe(true)
+  })
+})

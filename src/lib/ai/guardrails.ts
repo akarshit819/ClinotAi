@@ -10,16 +10,24 @@ const EMERGENCY_PATTERNS = [
   /\b(compound\s*?fracture|bone\s*?through\s*?skin)\b/i,
 ]
 
+// IMPORTANT: these regexes are used with .test() against a
+// module-level array. A `g` flag makes a regex STATEFUL — `.test()`
+// advances `lastIndex` between calls, so the same text can be spam in
+// one request and clean in the next depending on how many messages
+// were validated before it. That nondeterminism shipped to production
+// (a booking prompt containing the word "folloWINg" was classified as
+// spam because the prize pattern lacked word boundaries AND the /g
+// flag made detection call-order-dependent). Never use /g here.
 const SPAM_PATTERNS = [
-  /(https?:\/\/[^\s]+)/gi,
-  /(www\.)[^\s]+/gi,
-  /(buy|sell|cheap|discount|offer|limited|act\s*now|click\s*here)\s*(now|today|only)/gi,
+  /(https?:\/\/[^\s]+)/i,
+  /(www\.)[^\s]+/i,
+  /\b(buy|sell|cheap|discount|offer|limited|act\s*now|click\s*here)\s*(now|today|only)\b/i,
   // NOTE: Phone numbers and email addresses are intentionally NOT blocked here.
   // Patients legitimately provide their phone and email when booking appointments.
   // The old patterns (/(\+?\d{1,3}[-.\s]?){3,}/ and email regex) have been removed
   // because they caused every appointment slot-answer to be rejected as "spam".
-  /(free|win|winner|cash|prize|lottery|jackpot)/gi,
-  /[!?]{4,}/g,
+  /\b(free|win|winner|cash|prize|lottery|jackpot)\b/i,
+  /[!?]{4,}/,
 ]
 
 const ABUSE_PATTERNS = [
