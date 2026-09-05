@@ -485,6 +485,15 @@ export async function generateAIResponseWithTools(
             response = providerResponse.content
             break
           } catch (iterationError: unknown) {
+            const iterationMessage = iterationError instanceof Error ? iterationError.message : String(iterationError)
+            // Fatal provider errors (invalid key, rate limit, explicit
+            // OpenRouter HTTP errors) must NOT be swallowed into a
+            // generic AI_EMPTY_RESPONSE — they have a different root
+            // cause and a different fix (the credential, not the code).
+            // Re-throw so the outer handler records the true reason.
+            if (isFatalProviderErrorMessage(iterationMessage)) {
+              throw iterationError
+            }
             logger.error("Tool calling iteration failed", {
               clinicId,
               iteration,
@@ -515,7 +524,7 @@ export async function generateAIResponseWithTools(
         }
       } catch (providerError: unknown) {
         const err = providerError as Error
-        if (err?.message?.includes("Invalid API key") || err?.message?.includes("Rate limit exceeded")) {
+        if (isFatalProviderErrorMessage(err?.message ?? "")) {
           trace({ stage: "final", aiCallAttempted: true, provider: providerResult.config!.provider, providerSuccess: false, providerError: err?.message?.slice(0, 120), fallbackReason: "AI_REQUEST_FAILED" })
           throw err
         }
@@ -548,8 +557,24 @@ export async function generateAIResponseWithTools(
   } catch (error: unknown) {
     const err = error as Error
     logger.error("AI response error", { error: err?.message })
-    if (err?.message?.includes("Invalid API key")) throw error
-    if (err?.message?.includes("Rate limit exceeded")) throw error
+    // Fatal credential/rate-limit errors used to be RE-THROWN here,
+    // which made the worker job fail silently on retry instead of
+    // replying. The fallback contract requires an explicit, observable
+    // AI_REQUEST_FAILED fallback instead — a reply with a logged,
+    // machine-readable reason beats silence.
+    const isFatalProviderError = isFatalProviderErrorMessage(err?.message ?? "")
+    if (isFatalProviderError) {
+      logger.error("FATAL AI provider error — falling back with AI_REQUEST_FAILED. " +
+        "If this says 'Invalid API key', the configured provider credential is invalid, expired, or revoked: " +
+        "set a valid OPENAI_API_KEY or OPENROUTER_API_KEY.", { error: err?.message?.slice(0, 200) })
+      trace({ stage: "final", aiCallAttempted: true, providerSuccess: false, providerError: err?.message?.slice(0, 200), fallbackReason: "AI_REQUEST_FAILED" })
+      const fatalFallback = await generateFallbackResponse({ userMessage, clinicId })
+      return {
+        response: fatalFallback?.trim() || "I'm here to help with appointments and clinic questions. Could you please provide more details?",
+        toolCalls: [],
+        fallbackReason: "AI_REQUEST_FAILED",
+      }
+    }
 
     const errorFallback = await generateFallbackResponse({
       userMessage,
@@ -559,7 +584,7 @@ export async function generateAIResponseWithTools(
     if (!finalResponse || !finalResponse.trim()) {
       finalResponse = "I'm here to help with appointments and clinic questions. Could you please provide more details?"
     }
-    
+
     // FINAL SAFETY NET: Ensure we NEVER return empty response for appointment-related queries
     const isAppointmentQuery = /\b(appointment|book|schedule|reschedule|cancel|visit|see\s*(a\s*)?doctor|checkup|cleaning|consult)\b/i.test(userMessage)
     if (isAppointmentQuery && (!finalResponse || !finalResponse.trim())) {
@@ -570,6 +595,24 @@ export async function generateAIResponseWithTools(
     trace({ stage: "final", aiCallAttempted: false, aiInternalError: err?.message?.slice(0, 120), fallbackReason: "AI_INTERNAL_ERROR" })
     return { response: finalResponse, toolCalls: [], fallbackReason: "AI_INTERNAL_ERROR" }
   }
+}
+
+/**
+ * Fatal provider errors are credential/capacity problems (invalid key,
+ * exhausted credits, hard HTTP 4xx from the provider). They must be
+ * reported as AI_REQUEST_FAILED — never swallowed into a generic
+ * AI_EMPTY_RESPONSE — because the fix is in the ENVIRONMENT (a valid,
+ * funded provider key), not in the code.
+ */
+export function isFatalProviderErrorMessage(message: string): boolean {
+  if (!message) return false
+  return (
+    message.includes("Invalid API key") ||
+    message.includes("Rate limit exceeded") ||
+    message.includes("no credits remaining") ||
+    message.startsWith("OpenRouter error") ||
+    /^4d{2}s/.test(message) // provider SDK status-prefixed errors (e.g. "429 ...", "401 ...")
+  )
 }
 
 async function callProviderWithTools(config: any, messages: any[], tools: any[]): Promise<{ content: string | null; toolCalls: any[] }> {
@@ -603,6 +646,22 @@ async function callOpenAIWithTools(config: any, messages: any[], tools: any[]): 
   }
 }
 
+/**
+ * OpenRouter requires VENDOR-PREFIXED model ids ("openai/gpt-4o-mini",
+ * "anthropic/claude-3.5-sonnet"). The platform default model
+ * (AI.defaultModel = "gpt-4o-mini") is an OpenAI-style bare id, so it
+ * must be normalized or OpenRouter returns an error body with no
+ * choices — which used to surface as a silent AI_EMPTY_RESPONSE for
+ * EVERY message. Proven live: provider=openrouter model="gpt-4o-mini"
+ * → aiResponsePresent=false → scripted fallback.
+ */
+function normalizeOpenRouterModel(model: string): string {
+  if (!model) return "openai/gpt-4o-mini"
+  // Already vendor-prefixed ("vendor/model") — leave as-is.
+  if (model.includes("/")) return model
+  return `openai/${model}`
+}
+
 async function callOpenRouterWithTools(config: any, messages: any[], tools: any[]): Promise<{ content: string | null; toolCalls: any[] }> {
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -610,8 +669,9 @@ async function callOpenRouterWithTools(config: any, messages: any[], tools: any[
       "Authorization": `Bearer ${config.apiKey}`,
       "Content-Type": "application/json",
     },
+    signal: AbortSignal.timeout(AI.timeout),
     body: JSON.stringify({
-      model: config.model,
+      model: normalizeOpenRouterModel(config.model),
       messages: messages as any,
       tools: tools.length > 0 ? tools : undefined,
       tool_choice: tools.length > 0 ? "auto" : undefined,
@@ -620,8 +680,21 @@ async function callOpenRouterWithTools(config: any, messages: any[], tools: any[
     }),
   })
 
+  // HTTP errors (401 invalid key, 404 bad model id, 429 rate limit)
+  // return JSON with NO choices — the old code read data.choices[0]
+  // and threw an opaque TypeError that became a silent fallback.
+  if (!response.ok) {
+    const errBody = await response.text().catch(() => "")
+    if (response.status === 401) throw new Error("Invalid API key")
+    if (response.status === 429) throw new Error("Rate limit exceeded")
+    throw new Error(`OpenRouter error ${response.status}: ${errBody.slice(0, 200)}`)
+  }
+
   const data = await response.json()
-  const message = data.choices[0].message
+  const message = data?.choices?.[0]?.message
+  if (!message || typeof message.content !== "string") {
+    throw new Error(`OpenRouter returned an unexpected response shape: ${JSON.stringify(data).slice(0, 200)}`)
+  }
   return {
     content: message.content,
     toolCalls: message.tool_calls || [],

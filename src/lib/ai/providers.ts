@@ -136,7 +136,10 @@ export async function callOpenRouter(config: AIProviderConfig, messages: ChatMes
       "HTTP-Referer": "https://clinot.ai",
     },
     body: JSON.stringify({
-      model: config.model || "openai/gpt-4o-mini",
+      // OpenRouter requires vendor-prefixed model ids; a bare
+      // OpenAI-style id ("gpt-4o-mini") returns an error body with
+      // no choices, which previously surfaced as an empty response.
+      model: config.model?.includes("/") ? config.model : (config.model ? "openai/" + config.model : "openai/gpt-4o-mini"),
       messages,
       temperature: config.temperature ?? AI.defaultTemperature,
       max_tokens: config.maxTokens ?? AI.defaultMaxTokens,
