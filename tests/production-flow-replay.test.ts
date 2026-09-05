@@ -233,6 +233,14 @@ function aiCallsDuringTurn(before: number): number {
 }
 
 beforeEach(() => {
+  // Pin the provider environment: this file verifies the OpenAI-SDK
+  // mock path + WhatsApp chain. BuildPico primary is covered by
+  // tests/buildpico-primary.test.ts (mocked fetch) and the gated
+  // real-ai-provider.test.ts (real HTTP). vitest loads .env, which
+  // would otherwise route these inputs to the REAL Pico API.
+  // Force-ASSIGN (not delete): vitest re-applies .env values lazily,
+  // so a delete can be resurrected mid-run — an assignment always wins.
+  process.env.PICO_LLM_API_URL = ""
   db.conversation = null
   db.messages = []
   db.outboundJobs = []

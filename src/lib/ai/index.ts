@@ -4,7 +4,7 @@ import { randomUUID } from "crypto"
 import { logger } from "@/lib/logger"
 import { AI } from "@/config/constants"
 import { buildSystemPrompt } from "./prompt"
-import { callOpenAI, callAnthropic, callGemini, callGroq, callOpenRouter } from "./providers"
+import { callOpenAI, callAnthropic, callGemini, callGroq, callOpenRouter, callBuildPicoApps } from "./providers"
 import { generateFallbackResponse } from "./fallback"
 import { searchKnowledge, formatRAGContext, hasHighConfidenceMatch, type KnowledgeEntry } from "./rag"
 import {
@@ -376,6 +376,79 @@ export async function generateAIResponseWithTools(
     const fullMessages = [systemMessage, ...messages]
 
     const toolDefinitions = await buildToolDefinitions()
+
+    // ======================================================================
+    // BUILD PICO — the historically primary reply engine (commit
+    // 2c22055 "Use BuildPicoApps as primary AI provider"). The path was
+    // removed in 82701fa ("Use OpenRouter as primary AI provider"),
+    // which demoted every normal conversation to the OpenAI/OpenRouter
+    // providers and, when those fail, to scripted fallbacks.
+    //
+    // Restored here as the PRIMARY reply engine for the receptionist
+    // path: when PICO_LLM_API_URL is configured, normal conversation
+    // (greetings, symptoms, clinic questions, follow-ups) is answered
+    // by BuildPico with the bounded short-term context + RAG + system
+    // prompt. OpenAI/OpenRouter remain as configured fallback
+    // providers. On Pico failure the reason is traced and the chain
+    // continues — never a silent scripted reply.
+    // ======================================================================
+    if (getPicoUrl()) {
+      trace({
+        stage: "provider_selected",
+        aiCallAttempted: true,
+        provider: "buildpico",
+        model: "buildpico-llm",
+        apiKeyPresent: true,
+        source: "clinot",
+        contextMessageCount: fullMessages.length,
+        ragUsed: ragContext.length > 0,
+      })
+      try {
+        const picoReply = await callBuildPicoApps({ url: getPicoUrl() }, fullMessages)
+        if (picoReply && picoReply.trim()) {
+          const promptTokens = estimateTokens(systemPrompt + fullMessages.map((m) => m.content ?? "").join(""))
+          const completionTokens = estimateTokens(picoReply)
+          trackAiUsage(clinicId, {
+            promptTokens,
+            completionTokens,
+            totalTokens: promptTokens + completionTokens,
+          }, "clinot").catch((err) => {
+            logger.error("Failed to track AI usage", { error: err })
+          })
+          trace({
+            stage: "final",
+            aiCallAttempted: true,
+            provider: "buildpico",
+            providerSuccess: true,
+            aiResponsePresent: true,
+            aiResponseLength: picoReply.length,
+            fallbackUsed: false,
+          })
+          return { response: picoReply, toolCalls: [] }
+        }
+        // Empty reply from Pico — trace and fall through to the
+        // OpenAI/OpenRouter fallback providers.
+        trace({
+          stage: "provider_error",
+          provider: "buildpico",
+          providerSuccess: false,
+          providerError: "empty response body",
+        })
+      } catch (picoError) {
+        // BuildPico failure is OBSERVABLE with the exact stage and
+        // reason; the chain then continues to the fallback providers.
+        // The scripted generic lines are never used to hide this.
+        logger.error("BuildPicoApps provider failed — continuing to fallback providers", {
+          error: picoError instanceof Error ? picoError.message : "Unknown error",
+        })
+        trace({
+          stage: "provider_error",
+          provider: "buildpico",
+          providerSuccess: false,
+          providerError: (picoError instanceof Error ? picoError.message : String(picoError)).slice(0, 200),
+        })
+      }
+    }
 
     // Provider gate: if no provider config could be resolved (missing
     // API key, clinic not found, or BYO config missing), the AI is
