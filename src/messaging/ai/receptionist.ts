@@ -17,12 +17,20 @@
  *  10. GENERAL                          — greetings, FAQ, fallback
  *
  * The receptionist is the ONLY writer of
- * `Conversation.metadata.appointmentDraft`. The pipeline's
- * `prisma.conversation.update` no longer touches `metadata`.
+ * `Conversation.metadata.appointmentDraft` and the ONLY updater of
+ * `Conversation.metadata.contextState` (current topic + last user
+ * intent). The pipeline's `prisma.conversation.update` no longer
+ * touches `metadata`.
+ *
+ * Short-term context: every AI call receives a SMALL rolling window
+ * of recent messages plus a one-line `[context: ...]` header carrying
+ * the current topic and (if active) a one-line appointment draft
+ * summary. We deliberately do NOT send the entire conversation
+ * history — see `context.ts`.
  */
 
 import { prisma } from "@/lib/db"
-import { generateAIResponseWithTools, generateAIResponse } from "@/lib/ai"
+import { generateAIResponseWithTools } from "@/lib/ai"
 import { detectIntent } from "./intent"
 import {
   processSlotAnswer,
@@ -35,9 +43,92 @@ import {
   type AppointmentDraft,
 } from "./appointment-state"
 import { classifyRoute, logRouteDecision, type Route } from "./route-classifier"
+import {
+  buildShortTermContext,
+  readContextState,
+  topicForRoute,
+  updateContextState,
+  summarizeAppointmentDraft,
+  type TopicCategory,
+} from "./context"
 import { logger } from "@/lib/logger"
 import type { Intent, IncomingMessage, PipelineContext } from "../types"
 import type { ChatMessage } from "@/types"
+
+/**
+ * Map a route to a short intent hint stored as
+ * `metadata.contextState.lastUserIntent`. Hints (not transcripts)
+ * keep the next turn's context small while letting the AI resolve
+ * follow-ups like "How much?".
+ */
+function intentHintForRoute(route: Route): string {
+  switch (route) {
+    case "CLINIC_INFORMATION":
+      return "asking_about_clinic"
+    case "INSURANCE":
+      return "asking_about_insurance"
+    case "MEDICAL_SYMPTOM":
+      return "describing_symptom"
+    case "APPOINTMENT_START":
+      return "starting_appointment"
+    case "APPOINTMENT_SLOT_ANSWER":
+      return "answering_slot"
+    case "APPOINTMENT_INTERRUPTION":
+      return "side_question_during_booking"
+    case "CANCEL_INTENT":
+      return "asking_to_cancel"
+    case "RESCHEDULE_INTENT":
+      return "asking_to_reschedule"
+    case "EMERGENCY":
+      return "emergency"
+    default:
+      return "general_question"
+  }
+}
+
+/**
+ * Build the small AI context for this turn and the updated metadata
+ * blob that persists the new currentTopic / lastUserIntent. The
+ * caller writes `nextMetadata` back to Conversation.metadata.
+ */
+function buildSmallContext(params: {
+  messageContent: string
+  history: ChatMessage[]
+  currentMetadata: string | null | undefined
+  route: Route
+  draft: AppointmentDraft | null
+}): { messages: ChatMessage[]; nextMetadata: string } {
+  const priorTopic = readContextState(params.currentMetadata)?.currentTopic
+  const newTopic: TopicCategory = topicForRoute(params.route, priorTopic)
+  const hint = intentHintForRoute(params.route)
+
+  const draftActive = Boolean(params.draft?.active)
+  const draftSummary = draftActive
+    ? summarizeAppointmentDraft({
+        patientName: params.draft?.patientName,
+        patientPhone: params.draft?.patientPhone,
+        reason: params.draft?.reason,
+        preferredDate: params.draft?.preferredDate,
+        preferredTime: params.draft?.preferredTime,
+        expectedField: params.draft?.expectedField,
+      })
+    : null
+
+  const messages = buildShortTermContext({
+    userMessage: params.messageContent,
+    history: params.history,
+    contextState: { currentTopic: newTopic, lastUserIntent: hint },
+    appointmentDraftActive: draftActive,
+    appointmentDraftSummary: draftSummary,
+  })
+
+  const nextMetadata = updateContextState(params.currentMetadata, {
+    currentTopic: newTopic,
+    lastUserIntent: hint,
+  })
+
+  return { messages, nextMetadata }
+}
 
 export async function runAiReceptionist(
   context: Omit<PipelineContext, "aiResponse" | "intent" | "confidence" | "requiresClinic">,
@@ -76,7 +167,10 @@ export async function runAiReceptionist(
     await prisma.conversation.update({
       where: { id: context.conversation.id },
       data: {
-        metadata: writeDraftToMetadata(context.conversation.metadata, draft),
+        metadata: updateContextState(
+          writeDraftToMetadata(context.conversation.metadata, draft),
+          { currentTopic: "appointment", lastUserIntent: intentHintForRoute(decision.route) },
+        ),
         intent: "appointment",
         isEmergency: false,
         status: "active",
@@ -129,10 +223,14 @@ export async function runAiReceptionist(
       const aiResult = await bookAppointmentViaAi(context, turn.draft, conversationHistory)
       // Persist the (now-collected) draft until booking actually
       // succeeds; we clear it only after a successful tool result.
+      // contextState notes the booking is ready/attempted.
       await prisma.conversation.update({
         where: { id: context.conversation.id },
         data: {
-          metadata: writeDraftToMetadata(context.conversation.metadata, turn.draft),
+          metadata: updateContextState(
+            writeDraftToMetadata(context.conversation.metadata, turn.draft),
+            { currentTopic: "appointment", lastUserIntent: "booking_ready" },
+          ),
           intent: "appointment",
           isEmergency: false,
           status: aiResult.requiresClinic ? "waiting_clinic" : "active",
@@ -149,10 +247,14 @@ export async function runAiReceptionist(
 
     // Not yet complete — persist the updated draft and emit the
     // next prompt. The next prompt is deterministic; no LLM call.
+    // contextState.lastUserIntent records that we are mid-slot.
     await prisma.conversation.update({
       where: { id: context.conversation.id },
       data: {
-        metadata: writeDraftToMetadata(context.conversation.metadata, turn.draft),
+        metadata: updateContextState(
+          writeDraftToMetadata(context.conversation.metadata, turn.draft),
+          { currentTopic: "appointment", lastUserIntent: intentHintForRoute(decision.route) },
+        ),
         intent: "appointment",
         isEmergency: false,
         status: "active",
@@ -171,9 +273,10 @@ export async function runAiReceptionist(
   // LEVEL 4: INTERRUPTION (active draft + non-slot question)
   //   Active draft + non-slot question of any kind (clinic
   //   information, insurance, symptom question). Preserve the
-  //   draft, answer the interruption normally. The receptionist
-  //   is the SOLE writer of `Conversation.metadata.appointmentDraft`,
-  //   so we do NOT touch metadata on the interruption path.
+  //   draft, answer the interruption normally. We DO update
+  //   `metadata.contextState` (the current topic moved to the
+  //   interruption subject) but NEVER touch `appointmentDraft` —
+  //   business state survives the side question untouched.
   //   After the AI replies, the next user message is re-evaluated
   //   and resumes from the correct missing field.
   // ========================================================================
@@ -190,11 +293,30 @@ export async function runAiReceptionist(
       interruptionRoute: decision.route,
       expectedField: existingDraft.expectedField,
     })
+    // Small context: recent window + topic header + one-line draft
+    // summary so the AI knows a booking is mid-flight and must not
+    // re-ask collected fields. The draft itself is NOT modified.
+    const { messages, nextMetadata } = buildSmallContext({
+      messageContent: message.content,
+      history: conversationHistory,
+      currentMetadata: context.conversation.metadata,
+      route: decision.route,
+      draft: existingDraft,
+    })
     const aiResult = await generateAIResponseWithTools(
       message.content,
       context.clinicId,
-      conversationHistory,
+      // History param unused when prebuiltMessages is provided.
+      [],
+      undefined,
+      // Pre-built short-term context: [context header, ...recent
+      // turns, current user message]. Used verbatim by the AI layer.
+      { prebuiltMessages: messages },
     )
+    await prisma.conversation.update({
+      where: { id: context.conversation.id },
+      data: { metadata: nextMetadata },
+    })
     return {
       response: aiResult.response || "I'm here to help with appointments and clinic questions. Could you please provide more details?",
       intent: "general_question",
@@ -227,10 +349,23 @@ export async function runAiReceptionist(
     userMessage: message.content.slice(0, 120),
   })
 
+  // Small context: recent window + topic header (no active draft —
+  // draft is null here). The AI sees the CURRENT topic, so a
+  // follow-up like "How much?" resolves against the right subject,
+  // and a topic switch replaces the header on the next turn.
+  const { messages, nextMetadata } = buildSmallContext({
+    messageContent: message.content,
+    history: conversationHistory,
+    currentMetadata: context.conversation.metadata,
+    route: decision.route,
+    draft: null,
+  })
   const aiResult = await generateAIResponseWithTools(
     message.content,
     context.clinicId,
-    conversationHistory,
+    [],
+    undefined,
+    { prebuiltMessages: messages },
   )
 
   let response = aiResult.response
@@ -239,6 +374,12 @@ export async function runAiReceptionist(
     // started. Fall back to a generic clarification.
     response = "I'm here to help with appointments and clinic questions. Could you please provide more details?"
   }
+
+  // Persist the new currentTopic / lastUserIntent for the next turn.
+  await prisma.conversation.update({
+    where: { id: context.conversation.id },
+    data: { metadata: nextMetadata },
+  })
 
   return {
     response,

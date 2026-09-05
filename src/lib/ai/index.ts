@@ -256,11 +256,23 @@ export async function generateAIResponse(
   }
 }
 
+export interface GenerateAIOptions {
+  /**
+   * Pre-built message list (e.g. the receptionist's short-term
+   * context: [context header, ...recent turns, current user
+   * message]). When provided, it is used verbatim and
+   * `conversationHistory` is ignored. Guardrails, RAG and token
+   * tracking still run on `userMessage`.
+   */
+  prebuiltMessages?: ChatMessage[]
+}
+
 export async function generateAIResponseWithTools(
   userMessage: string,
   clinicId: string,
   conversationHistory: ChatMessage[] = [],
   maxTokens?: number,
+  options?: GenerateAIOptions,
 ): Promise<{ response: string; toolCalls?: any[] }> {
   const guardrail = validateInput(userMessage)
 
@@ -316,7 +328,12 @@ export async function generateAIResponseWithTools(
       return { response: buildMedicalQueryResponse() + `\n\nWould you like to schedule an appointment with our doctor instead?`, toolCalls: [] }
     }
 
-    const messages = buildConversationContext(userMessage, conversationHistory)
+    // Short-term context: when the caller provides a pre-built,
+    // already-trimmed message list (receptionist's small context
+    // window + topic header), use it verbatim. Otherwise fall back
+    // to the standard rolling-window builder.
+    const messages = options?.prebuiltMessages ??
+      buildConversationContext(userMessage, conversationHistory)
 
     const systemPrompt = buildSystemPrompt({
       clinicName: clinic?.name || "our clinic",

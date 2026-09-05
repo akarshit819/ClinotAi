@@ -23,7 +23,10 @@ export const PAGINATION = {
 export const AI = {
   maxMessageLength: 1000,
   maxUserMessageLength: 2000,
-  maxHistoryMessages: 10,
+  // Short-term context window: 4 recent turns. Enough for a natural
+  // follow-up ("How much?" after "I want whitening.") without
+  // re-sending the whole conversation. See src/messaging/ai/context.ts.
+  maxHistoryMessages: 4,
   timeout: 15000,
   defaultModel: "gpt-4o-mini",
   defaultTemperature: 0.7,
