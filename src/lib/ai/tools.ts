@@ -73,13 +73,17 @@ export async function executeToolCall(
   clinicId: string
 ): Promise<ToolResult> {
   const toolName = toolCall.name as AppointmentToolName
-  // Relative (not "@/...") on purpose: this module is loaded in the
-  // production launcher's in-process worker via tsx, where a dynamic
-  // import() performs native ESM resolution and cannot resolve the
-  // "@" tsconfig alias (production failure: "Cannot find package
-  // '@/lib' imported from .../src/lib/ai/tools.ts"). Webpack resolves
-  // relative dynamic imports identically, so builds are unaffected.
-  const tool = (await import("../appointment/tools")).APPOINTMENT_TOOLS[toolName]
+  // Uses the STATIC top-level import of APPOINTMENT_TOOLS — never a
+  // dynamic import(). In the production launcher's in-process worker
+  // (tsx), a dynamic import() can escape to Node's native ESM
+  // resolver, which cannot resolve extensionless relative paths
+  // ("Cannot find module '.../src/lib/appointment/tools' imported
+  // from '.../src/lib/ai/tools.ts'") — that failure aborted the whole
+  // AI layer before any provider was called. A static import resolves
+  // under whichever loader loaded THIS module, in every runtime
+  // (tsx CJS, tsx ESM, Next/Webpack), and the tools carry no
+  // initialization cost that would justify laziness.
+  const tool = APPOINTMENT_TOOLS[toolName]
 
   if (!tool) {
     return {
@@ -113,9 +117,11 @@ export async function executeToolCall(
   }
 }
 
-export async function buildToolDefinitions(): Promise<any[]> {
-  // Relative path — see the comment on executeToolCall above.
-  const { APPOINTMENT_TOOLS } = await import("../appointment/tools")
+export function buildToolDefinitions(): Array<{
+  type: "function"
+  function: { name: string; description: string; parameters: any }
+}> {
+  // Static binding — see the comment on executeToolCall above.
   return Object.values(APPOINTMENT_TOOLS).map(t => ({
     type: "function",
     function: {

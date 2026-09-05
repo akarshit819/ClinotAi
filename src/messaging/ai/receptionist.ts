@@ -349,12 +349,17 @@ export async function runAiReceptionist(
       where: { id: context.conversation.id },
       data: { metadata: nextMetadata },
     })
+    // Truthful source semantics: if the AI layer reports ANY
+    // fallbackReason, the reply did NOT come from a provider — even
+    // though a non-empty fallback TEXT exists. "AI" is reserved for
+    // genuine provider-generated responses.
+    const interruptionSource = aiResult.fallbackReason ? "FALLBACK" : "AI"
     return {
       response: aiResult.response || "I'm here to help with appointments and clinic questions. Could you please provide more details?",
       intent: "general_question",
       confidence: 0.7,
       requiresClinic: false,
-      responseSource: aiResult.response ? "AI" : "FALLBACK",
+      responseSource: interruptionSource,
     }
   }
 
@@ -401,9 +406,14 @@ export async function runAiReceptionist(
     { prebuiltMessages: messages },
   )
 
-  const hadAiResponse = Boolean(aiResult.response && aiResult.response.trim())
+  // Truthful source semantics: a non-empty fallback TEXT is NOT an AI
+  // response. "AI" is reported ONLY when the provider generated the
+  // reply (no fallbackReason); any fallbackReason — including
+  // AI_INTERNAL_ERROR from a module failure — means the final text
+  // came from the fallback path.
+  const hadAiResponse = Boolean(aiResult.response && aiResult.response.trim()) && !aiResult.fallbackReason
   let response = aiResult.response
-  if (!hadAiResponse) {
+  if (!aiResult.response || !aiResult.response.trim()) {
     // Empty AI response. Do NOT pretend an appointment is being
     // started. Fall back to a generic clarification.
     response = "I'm here to help with appointments and clinic questions. Could you please provide more details?"
