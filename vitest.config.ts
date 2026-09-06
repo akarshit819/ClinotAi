@@ -12,14 +12,14 @@ export default defineConfig({
     isolate: true,
     pool: "forks",
     fileParallelism: false,
-    // Hermetic normal runs: an empty PICO_LLM_API_URL disables the
-    // BuildPico primary path so NO test ever calls the real Pico API
-    // (a previous run leaked a real request that returned
-    // monthlyUsageLimitExceeded). The gated real-provider test
-    // (REAL_AI_PROVIDER_TEST=1) reads the credential directly from
-    // .env and force-sets it itself.
+    // Hermetic normal runs: an empty OPENROUTER_API_KEY makes the
+    // single provider path deterministically NOT_CONFIGURED in every
+    // test that does not explicitly set it, so no test can ever leak
+    // a real OpenRouter request. The gated real-provider test
+    // (REAL_AI_PROVIDER_TEST=1) force-restores the credential from
+    // .env itself.
     env: {
-      PICO_LLM_API_URL: "",
+      OPENROUTER_API_KEY: "",
     },
   },
   resolve: {

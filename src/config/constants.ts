@@ -28,7 +28,9 @@ export const AI = {
   // re-sending the whole conversation. See src/messaging/ai/context.ts.
   maxHistoryMessages: 4,
   timeout: 15000,
-  defaultModel: "gpt-4o-mini",
+  // Single provider: OpenRouter. Default model is the OpenRouter free
+  // router; override with OPENROUTER_MODEL (see src/lib/ai/providers.ts).
+  defaultModel: "openrouter/free",
   defaultTemperature: 0.7,
   defaultMaxTokens: 512,
 } as const

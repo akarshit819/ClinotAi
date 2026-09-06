@@ -46,7 +46,7 @@ vi.mock("@/lib/db", () => {
         emergencyPhone: "+15559999999",
         isOnboarded: true,
         useClinotAi: true,
-        aiProvider: "openai",
+        aiProvider: "clinot",
       }),
       findMany: vi.fn().mockResolvedValue([{ id: "clinic-1" }]),
     },

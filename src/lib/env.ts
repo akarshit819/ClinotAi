@@ -136,7 +136,7 @@ export function validateProductionSecrets(): void {
   // Optional but recommended for production
   const optionalWarnings: string[] = []
   if (!process.env.NEXT_PUBLIC_APP_URL) optionalWarnings.push("NEXT_PUBLIC_APP_URL")
-  if (!process.env.OPENAI_API_KEY && !process.env.OPENROUTER_API_KEY) optionalWarnings.push("OPENAI_API_KEY or OPENROUTER_API_KEY (AI provider)")
+  if (!process.env.OPENROUTER_API_KEY) optionalWarnings.push("OPENROUTER_API_KEY (AI provider — the single LLM provider)")
   if (!process.env.STRIPE_WEBHOOK_SECRET) optionalWarnings.push("STRIPE_WEBHOOK_SECRET")
 
   if (optionalWarnings.length > 0) {

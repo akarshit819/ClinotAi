@@ -410,17 +410,12 @@ async function main() {
   // never log key values. Without at least one configured provider the
   // receptionist falls back to scripted responses for every message,
   // so this MUST be visible at boot.
-  const aiProviders = {
-    openai: Boolean(process.env.OPENAI_API_KEY),
-    openrouter: Boolean(process.env.OPENROUTER_API_KEY),
-    anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
-    gemini: Boolean(process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY),
-    groq: Boolean(process.env.GROQ_API_KEY),
-  }
-  const anyProvider = Object.values(aiProviders).some(Boolean)
-  console.log(`[boot] AI providers configured (API key present): ${JSON.stringify(aiProviders)}`)
-  if (!anyProvider) {
-    console.error("[boot] WARNING: NO AI provider API key is configured. The AI receptionist cannot generate responses and every message will receive a scripted fallback. Set OPENAI_API_KEY or OPENROUTER_API_KEY.")
+  // ONE provider: OpenRouter. ONE model router: openrouter/free.
+  const orKeyPresent = Boolean(process.env.OPENROUTER_API_KEY)
+  const orModel = (process.env.OPENROUTER_MODEL || "openrouter/free").trim()
+  console.log(`[boot] OpenRouter configured: { apiKeyPresent: ${orKeyPresent}, model: "${orModel}" }`)
+  if (!orKeyPresent) {
+    console.error("[boot] ERROR: OPENROUTER_API_KEY is missing. Clinot AI conversations cannot use OpenRouter.")
   }
 
   // 7. Start the internal job processor IN THIS PROCESS. The worker

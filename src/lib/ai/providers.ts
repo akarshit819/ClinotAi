@@ -1,179 +1,148 @@
+/**
+ * OpenRouter — the SINGLE AI provider for Clinot.
+ *
+ * ONE PROVIDER. ONE MODEL ROUTER. ONE SOURCE OF TRUTH.
+ *
+ * There is deliberately no provider selection, no provider priority
+ * list, and no fallback to any other LLM provider. If OpenRouter
+ * fails, callers receive a typed error whose `reasonCode` identifies
+ * the exact failure (auth / rate limit / timeout / network / provider
+ * error / empty response) and produce a context-aware fallback.
+ *
+ * Model: defaults to "openrouter/free"; override with the optional
+ * OPENROUTER_MODEL environment variable. The API key is NEVER logged.
+ */
 import { AI } from "@/config/constants"
 import type { ChatMessage } from "@/types"
 
-interface AIProviderConfig {
-  provider: string
+export const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+
+export function getOpenRouterApiKey(): string {
+  return process.env.OPENROUTER_API_KEY?.trim() || ""
+}
+
+/** Default model "openrouter/free"; optional OPENROUTER_MODEL override. */
+export function getOpenRouterModel(): string {
+  return process.env.OPENROUTER_MODEL?.trim() || "openrouter/free"
+}
+
+export interface OpenRouterConfig {
   apiKey: string
   model: string
-  temperature: number
-  maxTokens: number
 }
 
-async function providerFetch(url: string, options: RequestInit): Promise<Response> {
-  return fetch(url, {
-    ...options,
-    signal: AbortSignal.timeout(AI.timeout),
-  })
-}
-
-export async function callOpenAI(config: AIProviderConfig, messages: ChatMessage[]): Promise<string> {
-  const res = await providerFetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: config.model || AI.defaultModel,
-      messages,
-      temperature: config.temperature ?? AI.defaultTemperature,
-      max_tokens: config.maxTokens ?? AI.defaultMaxTokens,
-    }),
-  })
-  if (!res.ok) {
-    const err = await res.text()
-    if (res.status === 401) throw new Error("Invalid API key")
-    if (res.status === 429) throw new Error("Rate limit exceeded")
-    throw new Error("OpenAI error: " + err)
+export function getOpenRouterConfig(): OpenRouterConfig {
+  return {
+    apiKey: getOpenRouterApiKey(),
+    model: getOpenRouterModel(),
   }
-  const data = await res.json()
-  return data.choices?.[0]?.message?.content || ""
 }
 
-export async function callAnthropic(config: AIProviderConfig, messages: ChatMessage[]): Promise<string> {
-  const systemMsg = messages.find((m) => m.role === "system")?.content || ""
-  const chatMessages = messages.filter((m) => m.role !== "system").map((m) => ({
-    role: m.role === "assistant" ? "assistant" : "user",
-    content: m.content,
-  }))
-  const res = await providerFetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": config.apiKey,
-      "anthropic-version": "2023-06-01",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: config.model || "claude-3-haiku-20240307",
-      system: systemMsg,
-      messages: chatMessages,
-      max_tokens: config.maxTokens ?? AI.defaultMaxTokens,
-      temperature: config.temperature ?? AI.defaultTemperature,
-    }),
-  })
-  if (!res.ok) {
-    const err = await res.text()
-    if (res.status === 401) throw new Error("Invalid API key")
-    if (res.status === 429) throw new Error("Rate limit exceeded")
-    throw new Error("Anthropic error: " + err)
+/** A provider failure that carries a machine-readable reason code. */
+export interface OpenRouterProviderError extends Error {
+  reasonCode:
+    | "OPENROUTER_NOT_CONFIGURED"
+    | "OPENROUTER_AUTH_FAILED"
+    | "OPENROUTER_RATE_LIMITED"
+    | "OPENROUTER_TIMEOUT"
+    | "OPENROUTER_NETWORK_ERROR"
+    | "OPENROUTER_PROVIDER_ERROR"
+    | "OPENROUTER_EMPTY_RESPONSE"
+}
+
+function openRouterError(reasonCode: OpenRouterProviderError["reasonCode"], message: string): OpenRouterProviderError {
+  // Never embed API keys or full request bodies in provider errors.
+  const err = new Error(`[${reasonCode}] ${message}`) as OpenRouterProviderError
+  err.reasonCode = reasonCode
+  return err
+}
+
+export interface OpenRouterCallOptions {
+  /** Chat-completions tool definitions; omitted when empty. */
+  tools?: Array<Record<string, unknown>>
+  /** Request timeout in ms (defaults to AI.timeout). */
+  timeoutMs?: number
+}
+
+export interface OpenRouterResult {
+  content: string
+  toolCalls: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>
+}
+
+/**
+ * One clear AI request path:
+ *   callOpenRouter(config, messages, { tools? }) → OpenRouter API.
+ *
+ * Handles: HTTP status codes (401/429/5xx/other), timeouts, network
+ * errors, error-shaped bodies, empty choices, and missing content —
+ * each mapped to an explicit reasonCode. The API key is never logged
+ * and never included in error messages.
+ */
+export async function callOpenRouter(
+  config: OpenRouterConfig,
+  messages: ChatMessage[],
+  options?: OpenRouterCallOptions,
+): Promise<OpenRouterResult> {
+  if (!config.apiKey) {
+    throw openRouterError(
+      "OPENROUTER_NOT_CONFIGURED",
+      "OPENROUTER_API_KEY is not set — Clinot AI conversations cannot use OpenRouter.",
+    )
   }
-  const data = await res.json()
-  return data.content?.[0]?.text || ""
-}
 
-export async function callGemini(config: AIProviderConfig, messages: ChatMessage[]): Promise<string> {
-  const systemMsg = messages.find((m) => m.role === "system")?.content || ""
-  const chatMessages = messages.filter((m) => m.role !== "system")
-  const contents = chatMessages.map((m) => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: m.content }],
-  }))
-  const res = await providerFetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${config.model || "gemini-1.5-flash"}:generateContent?key=${config.apiKey}`,
-    {
+  const tools = options?.tools && options.tools.length > 0 ? options.tools : undefined
+
+  let response: Response
+  try {
+    response = await fetch(OPENROUTER_ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Authorization": `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      signal: AbortSignal.timeout(options?.timeoutMs ?? AI.timeout),
       body: JSON.stringify({
-        contents,
-        systemInstruction: systemMsg ? { parts: [{ text: systemMsg }] } : undefined,
-        generationConfig: {
-          temperature: config.temperature ?? AI.defaultTemperature,
-          maxOutputTokens: config.maxTokens ?? AI.defaultMaxTokens,
-        },
+        model: config.model,
+        messages,
+        temperature: AI.defaultTemperature,
+        max_tokens: AI.defaultMaxTokens,
+        ...(tools ? { tools, tool_choice: "auto" } : {}),
       }),
-    },
-  )
-  if (!res.ok) {
-    const err = await res.text()
-    if (res.status === 400 && err.includes("API_KEY_INVALID")) throw new Error("Invalid API key")
-    if (res.status === 429) throw new Error("Rate limit exceeded")
-    throw new Error("Gemini error: " + err)
+    })
+  } catch (err) {
+    const e = err as Error
+    if (e.name === "TimeoutError" || e.name === "AbortError") {
+      throw openRouterError("OPENROUTER_TIMEOUT", `OpenRouter request timed out after ${options?.timeoutMs ?? AI.timeout}ms`)
+    }
+    throw openRouterError("OPENROUTER_NETWORK_ERROR", `Network failure reaching OpenRouter: ${e.message}`)
   }
-  const data = await res.json()
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || ""
-}
 
-export async function callGroq(config: AIProviderConfig, messages: ChatMessage[]): Promise<string> {
-  const res = await providerFetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: config.model || "llama-3.3-70b-versatile",
-      messages,
-      temperature: config.temperature ?? AI.defaultTemperature,
-      max_tokens: config.maxTokens ?? AI.defaultMaxTokens,
-    }),
-  })
-  if (!res.ok) {
-    const err = await res.text()
-    if (res.status === 401) throw new Error("Invalid API key")
-    if (res.status === 429) throw new Error("Rate limit exceeded")
-    throw new Error("Groq error: " + err)
+  if (!response.ok) {
+    // Read the error body safely (truncated) — it never contains our key.
+    const errBody = await response.text().catch(() => "")
+    if (response.status === 401) {
+      throw openRouterError("OPENROUTER_AUTH_FAILED", `OpenRouter authentication failed (401). ${errBody.slice(0, 200)}`)
+    }
+    if (response.status === 429) {
+      throw openRouterError("OPENROUTER_RATE_LIMITED", `OpenRouter rate limit / quota exceeded (429). ${errBody.slice(0, 200)}`)
+    }
+    if (response.status >= 500) {
+      throw openRouterError("OPENROUTER_PROVIDER_ERROR", `OpenRouter provider error (${response.status}). ${errBody.slice(0, 200)}`)
+    }
+    throw openRouterError("OPENROUTER_PROVIDER_ERROR", `OpenRouter request failed (${response.status}). ${errBody.slice(0, 200)}`)
   }
-  const data = await res.json()
-  return data.choices?.[0]?.message?.content || ""
-}
 
-export async function callOpenRouter(config: AIProviderConfig, messages: ChatMessage[]): Promise<string> {
-  const res = await providerFetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://clinot.ai",
-    },
-    body: JSON.stringify({
-      // OpenRouter requires vendor-prefixed model ids; a bare
-      // OpenAI-style id ("gpt-4o-mini") returns an error body with
-      // no choices, which previously surfaced as an empty response.
-      model: config.model?.includes("/") ? config.model : (config.model ? "openai/" + config.model : "openai/gpt-4o-mini"),
-      messages,
-      temperature: config.temperature ?? AI.defaultTemperature,
-      max_tokens: config.maxTokens ?? AI.defaultMaxTokens,
-    }),
-  })
-  if (!res.ok) {
-    const err = await res.text()
-    if (res.status === 401) throw new Error("Invalid API key")
-    if (res.status === 429) throw new Error("Rate limit exceeded")
-    throw new Error("OpenRouter error: " + err)
+  const data = await response.json().catch(() => null)
+  const message = data?.choices?.[0]?.message
+  if (!message) {
+    throw openRouterError(
+      "OPENROUTER_EMPTY_RESPONSE",
+      `OpenRouter returned a response with no choices: ${JSON.stringify(data).slice(0, 200)}`,
+    )
   }
-  const data = await res.json()
-  return data.choices?.[0]?.message?.content || ""
-}
 
-export async function callBuildPicoApps(config: { url: string }, messages: ChatMessage[]): Promise<string> {
-  const system = messages.find((m) => m.role === "system")?.content || ""
-  const chat = messages.filter((m) => m.role !== "system")
-  const lines: string[] = []
-  if (system) {
-    lines.push(`You are the AI receptionist for a clinic. Follow these instructions:\n${system}`)
+  return {
+    content: typeof message.content === "string" ? message.content : "",
+    toolCalls: Array.isArray(message.tool_calls) ? message.tool_calls : [],
   }
-  for (const m of chat) {
-    lines.push(`${m.role === "assistant" ? "Assistant" : "User"}: ${m.content}`)
-  }
-  const res = await providerFetch(config.url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt: lines.join("\n\n") }),
-  })
-  if (!res.ok) throw new Error("BuildPicoApps error: " + res.status)
-  const data = await res.json()
-  if (data?.status === "success" && typeof data?.text === "string" && data.text.trim()) {
-    return data.text.trim()
-  }
-  throw new Error("BuildPicoApps error: " + JSON.stringify(data))
 }

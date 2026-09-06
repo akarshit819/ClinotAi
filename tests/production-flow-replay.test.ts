@@ -5,13 +5,15 @@
  * production incident report:
  *
  *   USER MESSAGE → processIncomingMessage (pipeline) → receptionist
- *   → route → AI provider (mocked OpenAI SDK) → NON-EMPTY AI RESPONSE
- *   → outbound WhatsApp job payload (Job.text.body)
+ *   → route → OpenRouter (global fetch stubbed at the HTTP boundary)
+ *   → NON-EMPTY AI RESPONSE → outbound WhatsApp job payload
+ *   (Job.text.body)
  *
- * The OpenAI SDK is mocked at its boundary: every AI call is counted
- * and echoes the last user message as `AI_REPLY:<text>`. Any test
- * asserting the outbound WhatsApp body equals the AI echo therefore
- * proves the AI response was NOT overwritten by a fallback.
+ * OpenRouter is the SINGLE provider. The fetch stub counts every
+ * provider request and echoes the last user message as
+ * `AI_REPLY:<text>`. Any test asserting the outbound WhatsApp body
+ * equals the AI echo therefore proves the AI response was NOT
+ * overwritten by a fallback.
  *
  * Deterministic paths (appointment state machine, flow cancel) assert
  * that the AI is NOT called and the deterministic prompt is what
@@ -25,41 +27,37 @@ import { processIncomingMessage } from "../src/messaging/pipeline"
 import type { IncomingMessage } from "../src/messaging/types"
 
 // ---------------------------------------------------------------------------
-// OpenAI SDK boundary mock — counts every provider request and echoes the
-// last user message so tests can prove the AI response reaches WhatsApp
-// verbatim.
+// OpenRouter HTTP boundary stub — counts every provider request and
+// echoes the last user message so tests can prove the AI response
+// reaches WhatsApp verbatim. OpenRouter is the SINGLE provider; its
+// requests all go through global fetch.
 // ---------------------------------------------------------------------------
-const openaiState = vi.hoisted(() => ({
-  calls: [] as Array<{ messages: Array<{ role: string; content: unknown }> }>,
+const openrouterState = vi.hoisted(() => ({
+  calls: [] as Array<{ url: string; body: { model: string; messages: Array<{ role: string; content: unknown }>; tools?: unknown } }>,
   failNext: false,
 }))
 
-vi.mock("openai", () => ({
-  default: class MockOpenAI {
-    chat = {
-      completions: {
-        create: vi.fn(async (req: { messages: Array<{ role: string; content: unknown }> }) => {
-          if (openaiState.failNext) {
-            openaiState.failNext = false
-            throw new Error("simulated provider outage")
-          }
-          openaiState.calls.push(req)
-          const lastUser = [...req.messages].reverse().find((m) => m.role === "user")
-          const text = typeof lastUser?.content === "string" ? lastUser.content : "unknown"
-          return { choices: [{ message: { content: `AI_REPLY:${text}`, tool_calls: undefined } }] }
-        }),
-      },
-    }
-    constructor(_cfg: unknown) {}
-  },
-}))
+const openRouterStubResponse = (body: { messages: Array<{ role: string; content: unknown }> }) => {
+  const lastUser = [...body.messages].reverse().find((m) => m.role === "user")
+  const text = typeof lastUser?.content === "string" ? lastUser.content : "unknown"
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ choices: [{ message: { content: `AI_REPLY:${text}`, tool_calls: undefined } }] }),
+  }
+}
 
-// Platform provider resolution — force the "openai" path with a test
-// key regardless of the ambient environment.
-vi.mock("@/lib/ai/clinot-provider", () => ({
-  getClinotApiKey: vi.fn(() => "test-key"),
-  isClinotAiAvailable: vi.fn(() => true),
-  hasClinotProvider: vi.fn(() => true),
+vi.stubGlobal("fetch", vi.fn(async (url: string | URL, init?: { method?: string; body?: string }) => {
+  const body = init?.body ? JSON.parse(init.body) : {}
+  openrouterState.calls.push({ url: String(url), body })
+  if (openrouterState.failNext) {
+    openrouterState.failNext = false
+    throw new Error("simulated provider outage")
+  }
+  if (String(url).includes("openrouter.ai")) {
+    return openRouterStubResponse(body)
+  }
+  throw new Error("Unexpected fetch in test: " + String(url))
 }))
 
 // ---------------------------------------------------------------------------
@@ -221,7 +219,7 @@ function makeMessage(content: string, seq: number): IncomingMessage {
 
 /** Run one production turn and return the outbound WhatsApp text. */
 async function turn(content: string, seq: number): Promise<{ outbound: string | null; aiCallsBefore: number }> {
-  const aiCallsBefore = openaiState.calls.length
+  const aiCallsBefore = openrouterState.calls.length
   await processIncomingMessage("clinic-1", makeMessage(content, seq))
   const lastJob = db.outboundJobs[db.outboundJobs.length - 1]
   const outbound = lastJob?.payload?.payload?.text?.body ?? null
@@ -229,25 +227,23 @@ async function turn(content: string, seq: number): Promise<{ outbound: string | 
 }
 
 function aiCallsDuringTurn(before: number): number {
-  return openaiState.calls.length - before
+  return openrouterState.calls.length - before
 }
 
 beforeEach(() => {
-  // Pin the provider environment: this file verifies the OpenAI-SDK
-  // mock path + WhatsApp chain. BuildPico primary is covered by
-  // tests/buildpico-primary.test.ts (mocked fetch) and the gated
-  // real-ai-provider.test.ts (real HTTP). vitest loads .env, which
-  // would otherwise route these inputs to the REAL Pico API.
-  // Force-ASSIGN (not delete): vitest re-applies .env values lazily,
-  // so a delete can be resurrected mid-run — an assignment always wins.
+  // Pin the provider environment: this file verifies the single
+  // OpenRouter path (fetch stubbed) + WhatsApp chain. OpenRouter is
+  // the ONLY provider; force-ASSIGN the test key (never delete —
+  // vitest re-applies .env values lazily, so an assignment always
+  // wins over a later resurrection).
+  process.env.OPENROUTER_API_KEY = "test-or-key"
   process.env.PICO_LLM_API_URL = ""
   db.conversation = null
   db.messages = []
   db.outboundJobs = []
   db.patients = 0
-  openaiState.calls = []
-  openaiState.failNext = false
-  delete process.env.OPENROUTER_API_KEY
+  openrouterState.calls = []
+  openrouterState.failNext = false
 })
 
 // ===========================================================================
@@ -285,14 +281,15 @@ describe("AI-path inputs reach the provider and the AI response reaches WhatsApp
 describe("Short-term context stays bounded", () => {
   it("follow-up 'How much?' after whitening goes to the AI with a bounded window", async () => {
     await turn("I want teeth whitening", 1)
-    const before = openaiState.calls.length
+    const before = openrouterState.calls.length
     const { outbound } = await turn("How much?", 2)
     expect(aiCallsDuringTurn(before)).toBe(1)
     expect(outbound).toBe("AI_REPLY:How much?")
     // Bounded: system + [context header] + <=4 window + current message.
-    const req = openaiState.calls[openaiState.calls.length - 1]
-    expect(req.messages.length).toBeLessThanOrEqual(8)
-    expect(req.messages[0].role).toBe("system")
+    const req = openrouterState.calls[openrouterState.calls.length - 1]
+    expect(req.body.model).toBe("openrouter/free")
+    expect(req.body.messages.length).toBeLessThanOrEqual(8)
+    expect(req.body.messages[0].role).toBe("system")
   })
 })
 
@@ -325,13 +322,14 @@ describe("Appointment state machine handles booking deterministically", () => {
   it("booking completes through the AI tool path when date+time provided", async () => {
     await turn("I want to book appointment", 1)
     await turn("Akarshit\n870087940\nPain", 2)
-    const before = openaiState.calls.length
+    const before = openrouterState.calls.length
     const { outbound } = await turn("tomorrow at 4 PM", 3)
     // Draft completes → AI is invoked to call book_appointment.
     expect(aiCallsDuringTurn(before)).toBe(1)
     // The AI tool-path request includes the collected booking fields.
-    const req = openaiState.calls[openaiState.calls.length - 1]
-    const lastUser = [...req.messages].reverse().find((m) => m.role === "user")
+    const req = openrouterState.calls[openrouterState.calls.length - 1]
+    expect(req.body.tools).toBeTruthy() // booking handoff includes tools
+    const lastUser = [...req.body.messages].reverse().find((m) => m.role === "user")
     const content = typeof lastUser?.content === "string" ? lastUser.content : ""
     expect(content).toContain("Name: Akarshit")
     expect(content).toContain("Phone: 870087940")
@@ -346,10 +344,11 @@ describe("Appointment state machine handles booking deterministically", () => {
 // ===========================================================================
 describe("Fallback contract", () => {
   it("provider failure → scripted fallback (observable), AI response absent", async () => {
-    openaiState.failNext = true
+    openrouterState.failNext = true
     const { outbound, aiCallsBefore } = await turn("I have stomach pain", 1)
-    // The provider WAS attempted (and threw before recording a call).
-    expect(aiCallsDuringTurn(aiCallsBefore)).toBe(0)
+    // The provider WAS attempted — the stub records the request before
+    // the simulated outage throws.
+    expect(aiCallsDuringTurn(aiCallsBefore)).toBe(1)
     // Response is the intentional symptom fallback — useful, safe, and
     // never an AI echo.
     expect(outbound).not.toContain("AI_REPLY:")
@@ -357,11 +356,12 @@ describe("Fallback contract", () => {
     expect(outbound).toContain("book an appointment")
   })
 
-  it("provider not configured → AI skipped, fallback used (AI_PROVIDER_NOT_CONFIGURED)", async () => {
-    const { getClinotApiKey } = await import("@/lib/ai/clinot-provider")
-    ;(getClinotApiKey as ReturnType<typeof vi.fn>).mockReturnValueOnce(null)
+  it("provider not configured → AI skipped, fallback used (OPENROUTER_NOT_CONFIGURED)", async () => {
+    // Force-ASSIGN an empty key (never delete — vitest re-applies .env
+    // values lazily): getOpenRouterConfig() then reports NOT_CONFIGURED.
+    process.env.OPENROUTER_API_KEY = ""
     const { outbound } = await turn("I have stomach pain", 1)
-    expect(openaiState.calls.length).toBe(0)
+    expect(openrouterState.calls.length).toBe(0)
     expect(outbound).not.toContain("AI_REPLY:")
     expect(outbound).toContain("can't give medical advice")
     expect(outbound).toContain("book an appointment")

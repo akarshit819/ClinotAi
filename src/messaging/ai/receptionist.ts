@@ -343,7 +343,7 @@ export async function runAiReceptionist(
       undefined,
       // Pre-built short-term context: [context header, ...recent
       // turns, current user message]. Used verbatim by the AI layer.
-      { prebuiltMessages: messages },
+      { prebuiltMessages: messages, includeTools: false },
     )
     await prisma.conversation.update({
       where: { id: context.conversation.id },
@@ -403,7 +403,7 @@ export async function runAiReceptionist(
     context.clinicId,
     [],
     undefined,
-    { prebuiltMessages: messages },
+    { prebuiltMessages: messages, includeTools: false },
   )
 
   // Truthful source semantics: a non-empty fallback TEXT is NOT an AI

@@ -79,7 +79,7 @@ and no worker code, so it is safe in the Edge runtime.
 | `NEXT_PUBLIC_APP_URL` | YES | Must be the exact Render public URL — used by CSRF same-origin checks (middleware), auth emails, OAuth, WhatsApp webhook registration |
 | `META_APP_SECRET` | YES (for WhatsApp inbound) | Webhook HMAC signature verification |
 | `WA_WEBHOOK_SECRET` | YES (for WhatsApp inbound) | `hub.verify_token`; same value is pasted into Meta |
-| `OPENROUTER_API_KEY` or `OPENAI_API_KEY` | YES (for live AI replies) | Platform AI provider — OpenRouter wins whenever it is set |
+| `OPENROUTER_API_KEY` | YES (for live AI replies) | The SINGLE AI provider. Model defaults to `openrouter/free`; override with `OPENROUTER_MODEL` |
 | `PORT` | Platform | Injected by Render; never hardcode |
 
 ### First boot only — REMOVE after first successful login
@@ -110,7 +110,6 @@ and no worker code, so it is safe in the Edge runtime.
 - `GOOGLE_CLIENT_ID/SECRET`, `MICROSOFT_CLIENT_ID/SECRET` (calendar)
 - `CSRF_SECRET` (falls back to `JWT_SECRET`), `LOG_LEVEL`,
   `NEXT_PUBLIC_GA_ID`, `NEXT_PUBLIC_APP_VERSION`
-- `PICO_LLM_API_URL` (fallback LLM)
 
 ### Never set in production
 
@@ -159,3 +158,13 @@ dependency path (`npm ci --omit=dev && npm run build`):
 - single-service `npm run start` boot → standalone server + internal job
   processor → `/api/health` 200 healthy with processor status
 - `typecheck` clean, 177/177 tests, production build passes
+
+### AI provider (single provider — OpenRouter)
+
+- `OPENROUTER_API_KEY` — required for AI replies.
+- `OPENROUTER_MODEL` — optional; default `openrouter/free`.
+- There are NO other AI providers: OpenAI and BuildPico were removed
+  from the codebase. If OpenRouter fails, messages receive the
+  intentional context-aware fallback with
+  `fallbackReason=OPENROUTER_*` in the log — never a silent,
+  falsely-attributed scripted reply.
