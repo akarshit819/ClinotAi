@@ -237,10 +237,13 @@ function aiCallsDuringTurn(before: number): number {
 beforeEach(() => {
   // Pin the provider environment: this file verifies the single
   // OpenRouter path (fetch stubbed) + WhatsApp chain. OpenRouter is
-  // the ONLY provider; force-ASSIGN the test key (never delete —
-  // vitest re-applies .env values lazily, so an assignment always
-  // wins over a later resurrection).
+  // the ONLY provider; force-ASSIGN the test key and an explicit test
+  // PRIMARY model (never delete — vitest re-applies .env values
+  // lazily, so an assignment always wins over a later resurrection).
+  // Models come ONLY from env — the stub accepts any model ID.
   process.env.OPENROUTER_API_KEY = "test-or-key"
+  process.env.OPENROUTER_MODEL = "test-primary-model"
+  delete process.env.OPENROUTER_FALLBACK_MODELS
   process.env.PICO_LLM_API_URL = ""
   db.conversation = null
   db.messages = []
@@ -292,8 +295,8 @@ describe("Short-term context stays bounded", () => {
     expect(outbound).toBe("AI_REPLY:How much?")
     // Bounded: system + [context header] + <=4 window + current message.
     const req = openrouterState.calls[openrouterState.calls.length - 1]
-    // TEMP SINGLE-MODEL TEST: the exact pinned runtime model string.
-    expect(req.body.model).toBe("google/gemma-4-31b-it:free")
+    // The request must carry the ENV-CONFIGURED primary model verbatim.
+    expect(req.body.model).toBe("test-primary-model")
     expect(req.body.messages.length).toBeLessThanOrEqual(8)
     expect(req.body.messages[0].role).toBe("system")
   })

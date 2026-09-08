@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { getClinicId } from "@/lib/api"
 import { recordAuditEvent } from "@/lib/security"
+import { getOpenRouterModel } from "@/lib/ai/providers"
 
 const VALID_PROVIDERS = ["openrouter"]
 
@@ -39,10 +40,16 @@ export async function POST(req: Request) {
         clearTimeout(timeout)
         return NextResponse.json({ error: "Unsupported provider" }, { status: 400 })
       }
+      // Probe with the ENV-CONFIGURED model — never a hardcoded ID.
+      const probeModel = getOpenRouterModel()
+      if (!probeModel) {
+        clearTimeout(timeout)
+        return NextResponse.json({ error: "OPENROUTER_MODEL is not configured", code: "NOT_CONFIGURED" }, { status: 400 })
+      }
       response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "google/gemma-4-31b-it:free", messages: [{ role: "user", content: "hi" }], max_tokens: 10 }),
+        body: JSON.stringify({ model: probeModel, messages: [{ role: "user", content: "hi" }], max_tokens: 10 }),
         signal: controller.signal,
       })
     } finally {

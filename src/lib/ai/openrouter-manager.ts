@@ -8,16 +8,14 @@ import {
 } from "./providers"
 import { logger } from "@/lib/logger"
 
-// TEMP SINGLE-MODEL TEST (revert to restore the free-model failover
-// chain): OpenRouter is the ONLY provider and exactly ONE model is used.
-// The previous 6-model DEFAULT_FREE_CANDIDATES list is parked in the git
-// history (commit 02410f5) — do NOT re-add old models here without
-// explicitly ending this single-model experiment.
-export const SINGLE_MODEL_PIN = "google/gemma-4-31b-it:free"
-
-// OpenRouter model candidate — TEMPORARILY a single pinned model. This is
-// the SINGLE source of truth for the runtime model string.
-export const DEFAULT_FREE_CANDIDATES: string[] = [SINGLE_MODEL_PIN]
+// OpenRouter model configuration — ENVIRONMENT VARIABLES ARE THE SINGLE
+// SOURCE OF TRUTH. There is deliberately NO hardcoded model list in this
+// file: the operator changes models via Render env vars + redeploy, never
+// via code.
+//
+//   OPENROUTER_MODEL            (required) primary model, attempted FIRST.
+//   OPENROUTER_FALLBACK_MODELS  (optional) comma-separated fallbacks,
+//                               attempted in order after the primary.
 
 export type OpenRouterFailoverReason =
   | "OPENROUTER_NOT_CONFIGURED"
@@ -26,6 +24,7 @@ export type OpenRouterFailoverReason =
   | "OPENROUTER_TIMEOUT"
   | "OPENROUTER_NETWORK_ERROR"
   | "OPENROUTER_PROVIDER_ERROR"
+  | "OPENROUTER_BAD_REQUEST"
   | "OPENROUTER_EMPTY_RESPONSE"
   | "OPENROUTER_INVALID_RESPONSE"
   | "ALL_OPENROUTER_MODELS_FAILED"
@@ -55,15 +54,15 @@ export interface OpenRouterCallFailure {
 const MODEL_COOLDOWN_MS = 60_000
 const MAX_CONSECUTIVE_FAILURES = 2
 
-// In-memory model health. No Redis, no DB. Resets on process
+// In-memory model health, keyed DYNAMICALLY by model ID string. No Redis,
+// no DB, no hardcoded entries. When the operator changes OPENROUTER_MODEL,
+// the new ID automatically gets its own health entry. Resets on process
 // restart (acceptable warm-up window after a deploy).
 const health = new Map<string, { consecutiveFailures: number; cooldownUntil: number }>()
-let lastSuccessfulModel: string | null = null
 
 /** Test-only reset for the in-memory health map. */
 export function resetOpenRouterHealth(): void {
   health.clear()
-  lastSuccessfulModel = null
 }
 
 function isOnCooldown(model: string, now: number): boolean {
@@ -93,10 +92,9 @@ function markFailure(model: string, reason: OpenRouterFailoverReason): void {
 }
 
 function markSuccess(model: string): void {
-  if (lastSuccessfulModel !== model) {
-    lastSuccessfulModel = model
-    logger.info("[OPENROUTER-MGR] last successful model updated", { model })
-  }
+  // A success clears any accumulated failures so the model is immediately
+  // eligible again. No sticky reordering: the PRIMARY env model is ALWAYS
+  // attempted first on the next call.
   health.delete(model)
 }
 
@@ -104,7 +102,17 @@ function classifyError(err: unknown): { reason: OpenRouterFailoverReason; fatal:
   if (err && typeof err === "object" && "reasonCode" in err) {
     const typed = err as OpenRouterProviderError
     const code = typed.reasonCode
-    const fatal = code === "OPENROUTER_AUTH_FAILED" || code === "OPENROUTER_NOT_CONFIGURED"
+    // Fatal = stop the chain, fall back immediately:
+    //   auth / missing key  → another model cannot fix the credential;
+    //   bad request (400)   → the request body is identical for every
+    //                         candidate, so retrying models cannot help.
+    //                         Fix the request or the model env var.
+    // Recoverable (fail over): rate limits, timeouts, network failures,
+    // provider 4xx-availability (404) and 5xx errors, empty responses.
+    const fatal =
+      code === "OPENROUTER_AUTH_FAILED" ||
+      code === "OPENROUTER_NOT_CONFIGURED" ||
+      code === "OPENROUTER_BAD_REQUEST"
     return { reason: code, fatal, statusCode: typed.statusCode }
   }
   return { reason: "OPENROUTER_NETWORK_ERROR", fatal: false }
@@ -123,23 +131,32 @@ function traceOpenrouter(traceId: string, fields: Record<string, unknown>) {
 
 /**
  * Normalize a model ID: trim whitespace, drop empties. IDs that already
- * contain a provider prefix (e.g. "openai/gpt-4o-mini") are preserved
- * verbatim — never force or duplicate a prefix.
+ * contain a provider prefix are preserved verbatim — never force or
+ * duplicate a prefix.
  */
 export function normalizeModelId(raw: string): string {
   return raw.trim()
 }
 
-function parseModelOverride(): string[] {
-  // OPENROUTER_MODELS (preferred, comma-separated) and legacy
-  // OPENROUTER_MODEL (single). OPENROUTER_MODELS wins if set.
-  const list = process.env.OPENROUTER_MODELS?.trim()
-  if (list) {
-    return list.split(",").map(normalizeModelId).filter(Boolean)
-  }
-  const single = process.env.OPENROUTER_MODEL?.trim()
-  if (single) return [normalizeModelId(single)].filter(Boolean)
-  return []
+/**
+ * PRIMARY model — ALWAYS attempted first. Read live from the environment
+ * on every call so a Render redeploy picks up the new value with zero
+ * code changes. Empty string = not configured (never guess a model).
+ */
+export function getOpenRouterPrimaryModel(): string {
+  return normalizeModelId(process.env.OPENROUTER_MODEL ?? "")
+}
+
+/**
+ * OPTIONAL fallback models, parsed from a comma-separated list.
+ * Whitespace removed, empties dropped (dedup happens in candidates()).
+ */
+export function getOpenRouterFallbackModels(): string[] {
+  const raw = process.env.OPENROUTER_FALLBACK_MODELS ?? ""
+  return raw
+    .split(",")
+    .map(normalizeModelId)
+    .filter((m) => m.length > 0)
 }
 
 function dedupe(models: string[]): string[] {
@@ -151,34 +168,69 @@ function dedupe(models: string[]): string[] {
   return out
 }
 
-/**
- * Ordered candidate list for this call (test-visible).
- *
- * TEMP SINGLE-MODEL TEST: always returns exactly [SINGLE_MODEL_PIN].
- * Env overrides (OPENROUTER_MODELS / OPENROUTER_MODEL) and sticky
- * last-successful-model are DISABLED so no old model can be attempted.
- * Revert this function to restore multi-model failover.
- */
-export function getOpenRouterCandidates(): string[] {
-  // NOTE: parseModelOverride()/dedupe()/lastSuccessfulModel are intentionally
-  // unused during this single-model test — they power the failover chain
-  // that this pin temporarily replaces. Do not delete them.
-  return [SINGLE_MODEL_PIN]
+export interface OpenRouterModelConfig {
+  primaryModel: string
+  fallbackModels: string[]
+  totalModels: number
+}
+
+/** Current model configuration snapshot (test-visible). */
+export function getOpenRouterModelConfig(): OpenRouterModelConfig {
+  const primaryModel = getOpenRouterPrimaryModel()
+  if (!primaryModel) return { primaryModel: "", fallbackModels: [], totalModels: 0 }
+  const fallbackModels = dedupe(getOpenRouterFallbackModels()).filter((m) => m !== primaryModel)
+  return { primaryModel, fallbackModels, totalModels: 1 + fallbackModels.length }
 }
 
 /**
- * OpenRouter-only autonomous failover.
+ * Ordered candidate list for this call (test-visible):
+ *   1. OPENROUTER_MODEL (primary — always first)
+ *   2. OPENROUTER_FALLBACK_MODELS (in order, minus duplicates/primary)
+ * Empty when the primary is not configured — callers fail safely instead
+ * of silently selecting a model.
+ */
+export function getOpenRouterCandidates(): string[] {
+  const cfg = getOpenRouterModelConfig()
+  if (!cfg.primaryModel) return []
+  return [cfg.primaryModel, ...cfg.fallbackModels]
+}
+
+let lastLoggedConfigSignature = ""
+
+/**
+ * Startup-safe config log: emitted ONCE per distinct configuration (and
+ * again if the env config ever changes under a live process). NEVER logs
+ * API keys — only model IDs and counts.
+ */
+export function logOpenRouterConfigOnce(): void {
+  const cfg = getOpenRouterModelConfig()
+  const signature = `${cfg.primaryModel}|${cfg.fallbackModels.join(",")}`
+  if (signature === lastLoggedConfigSignature) return
+  lastLoggedConfigSignature = signature
+  if (!cfg.primaryModel) {
+    logger.error(
+      "[OPENROUTER] Configuration error: OPENROUTER_MODEL is not set — Clinot AI will use fallback responses for every message. Set OPENROUTER_MODEL in the environment and redeploy.",
+    )
+    return
+  }
+  logger.info("[OPENROUTER] Configuration loaded", {
+    primaryModel: cfg.primaryModel,
+    fallbackModelCount: cfg.fallbackModels.length,
+    totalModels: cfg.totalModels,
+  })
+}
+
+/**
+ * OpenRouter-only autonomous failover over ENV-CONFIGURED models.
  *
- * Order per call:
- *   1. lastSuccessfulModel (sticky, when set and not overridden first).
- *   2. OPENROUTER_MODELS env override (comma-separated) or
- *      OPENROUTER_MODEL legacy single-override.
- *   3. DEFAULT_FREE_CANDIDATES.
+ * Order per call (env is the single source of truth):
+ *   1. OPENROUTER_MODEL (primary — ALWAYS first, success stops here).
+ *   2. OPENROUTER_FALLBACK_MODELS (in order, deduped).
  *
  * Each candidate gets exactly ONE attempt. Cooldowned models are
  * skipped without burning a request slot. Fatal errors (auth, missing
- * key) stop the loop immediately. Bounded work: maxAttempts caps the
- * total iterations so there is no infinite loop.
+ * key, bad request) stop the loop immediately. Bounded work:
+ * maxAttempts caps the total iterations so there is no infinite loop.
  */
 export async function callOpenRouterWithFailover(
   messages: ChatMessage[],
@@ -202,8 +254,21 @@ export async function callOpenRouterWithFailover(
     return { ok: false, reason: "OPENROUTER_NOT_CONFIGURED", attempts: [] }
   }
 
+  // Startup-safe config line (once per config): shows the ACTUAL models
+  // in force without ever logging keys.
+  logOpenRouterConfigOnce()
+
   const candidates = getOpenRouterCandidates().slice(0, maxAttempts)
   if (candidates.length === 0) {
+    traceOpenrouter(traceId, {
+      stage: "final",
+      aiCallAttempted: false,
+      fallbackReason: "OPENROUTER_NOT_CONFIGURED",
+      responseSource: "FALLBACK",
+    })
+    logger.error(
+      "[OPENROUTER-MGR] OPENROUTER_MODEL is not set — no model attempted. Set OPENROUTER_MODEL in the environment and redeploy.",
+    )
     return { ok: false, reason: "OPENROUTER_NOT_CONFIGURED", attempts: [] }
   }
 
@@ -231,8 +296,7 @@ export async function callOpenRouterWithFailover(
       totalModels: candidates.length,
       aiCallAttempted: true,
     })
-    // Explicit pre-request line for the single-model test: the exact
-    // runtime model string must read google/gemma-4-31b-it:free.
+    // Explicit pre-request line: the exact runtime model string from env.
     logger.info(`[CLINOT_AI_TRACE] provider=openrouter model=${model}`, {
       traceId,
       attempt: attemptNum,

@@ -2,14 +2,14 @@
  * Static provider audit (STEP 15).
  *
  * Fails if the ACTIVE AI provider implementation references any
- * removed provider (OpenAI SDK calls, BuildPico) or any dead
- * credential variable. OpenRouter must be the single provider.
+ * removed provider (OpenAI SDK calls, BuildPico), any dead
+ * credential variable, or any HARDCODED model ID. OpenRouter must be
+ * the single provider and OPENROUTER_MODEL / OPENROUTER_FALLBACK_MODELS
+ * env vars must be the single source of truth for model selection.
  *
  * Allowed occurrences (documented, outside the active AI path):
- *   - src/app/api/api-config/test/route.ts — dashboard BYO-credential
- *     tester UI (does not feed the AI reply path)
- *   - src/config/constants.ts — PROVIDERS/PROVIDER_MODELS UI metadata
- *   - tests/** — test files
+ *   - legacy dashboard BYO-credential UI (does not feed the AI reply path)
+ *   - tests/** — test files (synthetic model IDs only)
  */
 import { describe, it, expect } from "vitest"
 import fs from "fs"
@@ -60,12 +60,42 @@ describe("Static provider audit: OpenRouter is the ONLY provider", () => {
     expect(src).toContain("openrouter.ai/api/v1/chat/completions")
   })
 
-  it("ai/openrouter-manager.ts is the multi-model failover path", () => {
+  it("ai/openrouter-manager.ts is env-driven with NO hardcoded model list", () => {
     const src = fs.readFileSync(path.join(AI_DIR, "openrouter-manager.ts"), "utf8")
     expect(src).toContain("callOpenRouterWithFailover")
-    expect(src).toContain("OPENROUTER_MODELS")
-    expect(src).toContain(":free")
-    expect(src.includes("openrouter/free,"), "must not use the openrouter/free alias as a model candidate").toBe(false)
+    expect(src).toContain("OPENROUTER_MODEL")
+    expect(src).toContain("OPENROUTER_FALLBACK_MODELS")
+    for (const banned of [
+      "DEFAULT_FREE_CANDIDATES",
+      "SINGLE_MODEL_PIN",
+      "openrouter/free",
+      // Legacy plural override env access (exact match — the
+      // ALL_OPENROUTER_MODELS_FAILED reason code is legitimate).
+      "process.env.OPENROUTER_MODELS",
+    ]) {
+      expect(src.includes(banned), `src/lib/ai/openrouter-manager.ts must not reference "${banned}"`).toBe(false)
+    }
+    // No hardcoded OpenRouter model-ID literals: any "…:free" literal or
+    // "openrouter/<model>" literal (the openrouter.ai endpoint URL is fine).
+    const stripped = src.split("openrouter.ai").join("")
+    expect(stripped.includes(":free\""), "manager must not hardcode :free model IDs").toBe(false)
+    expect(stripped.includes('"openrouter/'), "manager must not hardcode openrouter/ model IDs").toBe(false)
+  })
+
+  it("no active AI runtime file hardcodes a model ID", () => {
+    for (const file of ["index.ts", "providers.ts"]) {
+      const src = fs.readFileSync(path.join(AI_DIR, file), "utf8")
+      const stripped = src.split("openrouter.ai").join("")
+      expect(stripped.includes(":free\""), `${file} must not hardcode :free model IDs`).toBe(false)
+      expect(stripped.includes('"openrouter/'), `${file} must not hardcode openrouter/ model IDs`).toBe(false)
+    }
+  })
+
+  it("src/config/constants.ts carries no model configuration", () => {
+    const src = fs.readFileSync(path.join(process.cwd(), "src", "config", "constants.ts"), "utf8")
+    for (const banned of ["PROVIDERS", "PROVIDER_MODELS", "AIProvider", "defaultModel"]) {
+      expect(src.includes(banned), `src/config/constants.ts must not reference "${banned}"`).toBe(false)
+    }
   })
 
   it("no active source file references PICO_LLM_API_URL or the BuildPico API", () => {

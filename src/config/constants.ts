@@ -28,23 +28,12 @@ export const AI = {
   // re-sending the whole conversation. See src/messaging/ai/context.ts.
   maxHistoryMessages: 4,
   timeout: 15000,
-  // Single provider: OpenRouter. TEMP SINGLE-MODEL TEST — pinned to
-  // google/gemma-4-31b-it:free (see src/lib/ai/openrouter-manager.ts).
-  defaultModel: "google/gemma-4-31b-it:free",
+  // Single provider: OpenRouter. The MODEL is never hardcoded here — it
+  // comes from OPENROUTER_MODEL / OPENROUTER_FALLBACK_MODELS (see
+  // src/lib/ai/openrouter-manager.ts).
   defaultTemperature: 0.7,
   defaultMaxTokens: 512,
 } as const
-
-export const PROVIDERS = [
-  { value: "openrouter", label: "OpenRouter" },
-] as const
-
-export type AIProvider = (typeof PROVIDERS)[number]["value"]
-
-export const PROVIDER_MODELS: Record<AIProvider, string[]> = {
-  // TEMP SINGLE-MODEL TEST: only the pinned model (see openrouter-manager.ts).
-  openrouter: ["google/gemma-4-31b-it:free"],
-}
 
 export const COLORS = {
   primary: "#1E7FE3",

@@ -208,6 +208,7 @@ export type FallbackReason =
   | "OPENROUTER_TIMEOUT"
   | "OPENROUTER_NETWORK_ERROR"
   | "OPENROUTER_PROVIDER_ERROR"
+  | "OPENROUTER_BAD_REQUEST"
   | "OPENROUTER_EMPTY_RESPONSE"
   | "OPENROUTER_INVALID_RESPONSE"
   | "ALL_OPENROUTER_MODELS_FAILED"
@@ -216,11 +217,11 @@ export type FallbackReason =
 /**
  * Canonical AI entry point for the WhatsApp receptionist.
  *
- * ONE PROVIDER: OpenRouter, via the autonomous free-model failover
- * manager (openrouter-manager.ts). Override candidates with
- * OPENROUTER_MODELS (comma-separated) or OPENROUTER_MODEL. No provider
- * chains, no fallback providers. On failure: explicit trace +
- * context-aware fallback.
+ * ONE PROVIDER: OpenRouter, via the env-configured failover manager
+ * (openrouter-manager.ts). OPENROUTER_MODEL is the primary (always
+ * first); OPENROUTER_FALLBACK_MODELS is the optional comma-separated
+ * fallback chain. No provider chains, no fallback providers, no
+ * hardcoded models. On failure: explicit trace + context-aware fallback.
  */
 export async function generateAIResponseWithTools(
   userMessage: string,

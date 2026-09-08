@@ -410,12 +410,15 @@ async function main() {
   // never log key values. Without at least one configured provider the
   // receptionist falls back to scripted responses for every message,
   // so this MUST be visible at boot.
-  // ONE provider: OpenRouter free-model failover chain (see
-  // src/lib/ai/openrouter-manager.ts). OPENROUTER_MODELS wins over
-  // OPENROUTER_MODEL; both are optional.
+  // ONE provider: OpenRouter. Models come ONLY from env (see
+  // src/lib/ai/openrouter-manager.ts): OPENROUTER_MODEL (primary,
+  // required) + OPENROUTER_FALLBACK_MODELS (optional CSV).
   const orKeyPresent = Boolean(process.env.OPENROUTER_API_KEY)
-  const orModels = (process.env.OPENROUTER_MODELS || process.env.OPENROUTER_MODEL || "free-model failover defaults").trim()
-  console.log(`[boot] OpenRouter configured: { apiKeyPresent: ${orKeyPresent}, models: "${orModels}" }`)
+  const orPrimary = (process.env.OPENROUTER_MODEL || "(unset)").trim()
+  const orFallbackCount = (process.env.OPENROUTER_FALLBACK_MODELS || "")
+    .split(",").map((s) => s.trim()).filter(Boolean).length
+  console.log(`[OPENROUTER] Configuration loaded { primaryModel: "${orPrimary}", fallbackModelCount: ${orFallbackCount}, totalModels: ${orPrimary === "(unset)" ? 0 : 1 + orFallbackCount} }`)
+  console.log(`[boot] OpenRouter configured: { apiKeyPresent: ${orKeyPresent}, primaryModel: "${orPrimary}" }`)
   if (!orKeyPresent) {
     console.error("[boot] ERROR: OPENROUTER_API_KEY is missing. Clinot AI conversations cannot use OpenRouter.")
   }

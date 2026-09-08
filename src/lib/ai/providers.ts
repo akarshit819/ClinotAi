@@ -23,13 +23,13 @@ export function getOpenRouterApiKey(): string {
 }
 
 /**
- * Default model for single-shot callers. The failover manager
- * (openrouter-manager.ts) uses its own free-candidate list; this default
- * only applies to direct callOpenRouter uses and env overrides.
+ * Configured model for single-shot callers. Reads OPENROUTER_MODEL live —
+ * empty string when unset (callers must fail safely, never guess a model).
+ * The failover manager builds its own candidate list from this plus
+ * OPENROUTER_FALLBACK_MODELS.
  */
 export function getOpenRouterModel(): string {
-  // TEMP SINGLE-MODEL TEST: pinned model (see openrouter-manager.ts).
-  return process.env.OPENROUTER_MODEL?.trim() || "google/gemma-4-31b-it:free"
+  return process.env.OPENROUTER_MODEL?.trim() || ""
 }
 
 export interface OpenRouterConfig {
@@ -53,6 +53,7 @@ export interface OpenRouterProviderError extends Error {
     | "OPENROUTER_TIMEOUT"
     | "OPENROUTER_NETWORK_ERROR"
     | "OPENROUTER_PROVIDER_ERROR"
+    | "OPENROUTER_BAD_REQUEST"
     | "OPENROUTER_EMPTY_RESPONSE"
   statusCode?: number
 }
@@ -134,6 +135,9 @@ export async function callOpenRouter(
     const errBody = await response.text().catch(() => "")
     if (response.status === 401 || response.status === 403) {
       throw openRouterError("OPENROUTER_AUTH_FAILED", `OpenRouter authentication failed (${response.status}). ${errBody.slice(0, 200)}`, response.status)
+    }
+    if (response.status === 400) {
+      throw openRouterError("OPENROUTER_BAD_REQUEST", `OpenRouter rejected the request (400) — malformed payload or unsupported parameters, not a model-availability issue. ${errBody.slice(0, 200)}`, response.status)
     }
     if (response.status === 402) {
       throw openRouterError("OPENROUTER_RATE_LIMITED", `OpenRouter credits exhausted (402). ${errBody.slice(0, 200)}`, response.status)
