@@ -3,7 +3,8 @@ import { randomUUID } from "crypto"
 import { logger } from "@/lib/logger"
 import { AI } from "@/config/constants"
 import { buildSystemPrompt } from "./prompt"
-import { callOpenRouter, getOpenRouterConfig, type OpenRouterProviderError } from "./providers"
+import { getOpenRouterConfig, type OpenRouterProviderError } from "./providers"
+import { callOpenRouterWithFailover } from "./openrouter-manager"
 import { generateFallbackResponse } from "./fallback"
 import { searchKnowledge, formatRAGContext, type KnowledgeEntry } from "./rag"
 import {
@@ -127,8 +128,8 @@ export async function generateAIResponse(
     const config = getOpenRouterConfig()
 
     try {
-      const result = await callOpenRouter(config, fullMessages)
-      if (result.content.trim()) {
+      const result = await callOpenRouterWithFailover(fullMessages)
+      if (result.ok && result.content.trim()) {
         const promptTokens = estimateTokens(systemPrompt + messages.map((m) => m.content).join(""))
         const completionTokens = estimateTokens(result.content)
 
@@ -140,10 +141,13 @@ export async function generateAIResponse(
           logger.error("Failed to track AI usage", { error: err })
         })
 
-        logger.info("AI response generated", { provider: "openrouter", clinicId })
+        logger.info("AI response generated", { provider: "openrouter", clinicId, model: result.model })
         return result.content
       }
-      logger.warn("OpenRouter returned an empty response", { clinicId })
+      logger.warn("OpenRouter failover exhausted without a usable response", {
+        clinicId,
+        reason: result.ok ? "OPENROUTER_EMPTY_RESPONSE" : result.reason,
+      })
     } catch (providerError: unknown) {
       if (isProviderError(providerError)) {
         logger.error("OpenRouter request failed", {
@@ -205,14 +209,18 @@ export type FallbackReason =
   | "OPENROUTER_NETWORK_ERROR"
   | "OPENROUTER_PROVIDER_ERROR"
   | "OPENROUTER_EMPTY_RESPONSE"
+  | "OPENROUTER_INVALID_RESPONSE"
+  | "ALL_OPENROUTER_MODELS_FAILED"
   | "AI_INTERNAL_ERROR"
 
 /**
  * Canonical AI entry point for the WhatsApp receptionist.
  *
- * ONE PROVIDER: OpenRouter. ONE MODEL ROUTER: openrouter/free
- * (override with OPENROUTER_MODEL). No provider chains, no fallback
- * providers. On failure: explicit trace + context-aware fallback.
+ * ONE PROVIDER: OpenRouter, via the autonomous free-model failover
+ * manager (openrouter-manager.ts). Override candidates with
+ * OPENROUTER_MODELS (comma-separated) or OPENROUTER_MODEL. No provider
+ * chains, no fallback providers. On failure: explicit trace +
+ * context-aware fallback.
  */
 export async function generateAIResponseWithTools(
   userMessage: string,
@@ -303,7 +311,7 @@ export async function generateAIResponseWithTools(
 
     const fullMessages: ChatMessage[] = [{ role: "system", content: systemPrompt }, ...messages]
 
-    // ONE provider: OpenRouter. ONE model router: openrouter/free.
+    // ONE provider: OpenRouter free-model failover manager.
     const config = getOpenRouterConfig()
     const includeTools = options?.includeTools !== false
     const toolDefinitions = includeTools ? buildToolDefinitions() : []
@@ -312,7 +320,7 @@ export async function generateAIResponseWithTools(
       stage: "provider_selected",
       aiCallAttempted: true,
       provider: "openrouter",
-      model: config.model,
+      failover: true,
       apiKeyPresent: Boolean(config.apiKey),
       source: "clinot",
       toolsIncluded: includeTools,
@@ -323,16 +331,32 @@ export async function generateAIResponseWithTools(
     let response: string | null = null
     let toolCalls: any[] = []
     let chatMessages = fullMessages
+    let failoverReason: FallbackReason | undefined
 
     // Tool-calling loop: needed only when tools are included (the
-    // booking-completion handoff). Each tool result is fed back to
+    // booking-completion handoff). Each iteration goes through the
+    // OpenRouter failover manager; each tool result is fed back to
     // the model; text responses end the loop.
     for (let iteration = 0; iteration < 3; iteration++) {
-      const providerResponse = await callOpenRouter(
-        config,
+      const failover = await callOpenRouterWithFailover(
         chatMessages,
-        includeTools ? { tools: toolDefinitions } : undefined,
+        {
+          tools: includeTools ? { tools: toolDefinitions } : undefined,
+          traceId,
+        },
       )
+      if (!failover.ok) {
+        failoverReason = failover.reason as FallbackReason
+        trace({
+          stage: "provider_error",
+          aiCallAttempted: true,
+          provider: "openrouter",
+          providerSuccess: false,
+          fallbackReason: failoverReason,
+        })
+        break
+      }
+      const providerResponse = { content: failover.content, toolCalls: failover.toolCalls }
 
       if (providerResponse.toolCalls.length > 0) {
         toolCalls.push(...providerResponse.toolCalls)
@@ -411,13 +435,14 @@ export async function generateAIResponseWithTools(
     }
 
     if (!response || !response.trim()) {
-      logger.warn("OpenRouter returned no usable content after tool loop", { clinicId })
-      trace({ stage: "final", aiCallAttempted: true, provider: "openrouter", providerSuccess: true, aiResponsePresent: false, fallbackReason: "OPENROUTER_EMPTY_RESPONSE" })
+      const emptyReason: FallbackReason = failoverReason ?? "OPENROUTER_EMPTY_RESPONSE"
+      logger.warn("OpenRouter failover returned no usable content after tool loop", { clinicId, reason: emptyReason })
+      trace({ stage: "final", aiCallAttempted: true, provider: "openrouter", providerSuccess: false, aiResponsePresent: false, fallbackReason: emptyReason })
       const emptyFallback = await generateFallbackResponse({ userMessage, clinicId })
       return {
         response: emptyFallback?.trim() || "I'm here to help with appointments and clinic questions. Could you please provide more details?",
         toolCalls,
-        fallbackReason: "OPENROUTER_EMPTY_RESPONSE",
+        fallbackReason: emptyReason,
       }
     } else {
       const promptTokens = estimateTokens(systemPrompt + chatMessages.map((m) => m.content ?? "").join(""))

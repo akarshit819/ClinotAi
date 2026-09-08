@@ -79,7 +79,7 @@ and no worker code, so it is safe in the Edge runtime.
 | `NEXT_PUBLIC_APP_URL` | YES | Must be the exact Render public URL — used by CSRF same-origin checks (middleware), auth emails, OAuth, WhatsApp webhook registration |
 | `META_APP_SECRET` | YES (for WhatsApp inbound) | Webhook HMAC signature verification |
 | `WA_WEBHOOK_SECRET` | YES (for WhatsApp inbound) | `hub.verify_token`; same value is pasted into Meta |
-| `OPENROUTER_API_KEY` | YES (for live AI replies) | The SINGLE AI provider. Model defaults to `openrouter/free`; override with `OPENROUTER_MODEL` |
+| `OPENROUTER_API_KEY` | YES (for live AI replies) | The SINGLE AI provider. Free-model failover chain; override with `OPENROUTER_MODELS` (comma-separated, preferred) or `OPENROUTER_MODEL` |
 | `PORT` | Platform | Injected by Render; never hardcode |
 
 ### First boot only — REMOVE after first successful login
@@ -162,7 +162,8 @@ dependency path (`npm ci --omit=dev && npm run build`):
 ### AI provider (single provider — OpenRouter)
 
 - `OPENROUTER_API_KEY` — required for AI replies.
-- `OPENROUTER_MODEL` — optional; default `openrouter/free`.
+- `OPENROUTER_MODELS` — optional comma-separated free-model failover chain (preferred).
+- `OPENROUTER_MODEL` — optional legacy single-model override (used only when `OPENROUTER_MODELS` is unset).
 - There are NO other AI providers: OpenAI and BuildPico were removed
   from the codebase. If OpenRouter fails, messages receive the
   intentional context-aware fallback with

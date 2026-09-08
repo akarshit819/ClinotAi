@@ -6,8 +6,9 @@
  * NO mocks, NO stubs, NO fake fetch.
  *
  * Proves: request reaches OpenRouter, authentication result, the
- * requested model (openrouter/free unless OPENROUTER_MODEL overrides),
- * a valid response structure, and non-empty assistant content.
+ * free-model failover chain (OPENROUTER_MODELS/OPENROUTER_MODEL
+ * override the defaults), a valid response structure, and non-empty
+ * assistant content.
  *
  * Honesty rules:
  *   - 401 → the test FAILS with OPENROUTER_AUTH_FAILED (never hidden).
@@ -43,7 +44,7 @@ describeMaybe("REAL OpenRouter provider (real HTTP, no mocks)", () => {
       console.log("[real-openrouter] SKIP reason: OPENROUTER_API_KEY is not set")
     } else {
       console.log(
-        `[real-openrouter] OPENROUTER_API_KEY present (length ${process.env.OPENROUTER_API_KEY!.trim().length}), model=${process.env.OPENROUTER_MODEL?.trim() || "openrouter/free"}`,
+        `[real-openrouter] OPENROUTER_API_KEY present (length ${process.env.OPENROUTER_API_KEY!.trim().length}), models=${process.env.OPENROUTER_MODELS?.trim() || process.env.OPENROUTER_MODEL?.trim() || "free-model failover defaults"}`,
       )
     }
   })

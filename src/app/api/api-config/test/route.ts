@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { getClinicId } from "@/lib/api"
 import { recordAuditEvent } from "@/lib/security"
 
-const VALID_PROVIDERS = ["openai", "anthropic", "gemini", "groq", "openrouter"]
+const VALID_PROVIDERS = ["openrouter"]
 
 export async function POST(req: Request) {
   try {
@@ -35,53 +35,16 @@ export async function POST(req: Request) {
     const timeout = setTimeout(() => controller.abort(), 10000)
 
     try {
-      switch (provider) {
-        case "openai":
-          response = await fetch("https://api.openai.com/v1/models", {
-            headers: { Authorization: `Bearer ${apiKey}` },
-            signal: controller.signal,
-          })
-          break
-        case "anthropic":
-          response = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-              "x-api-key": apiKey,
-              "anthropic-version": "2023-06-01",
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ model: "claude-3-haiku-20240307", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }),
-            signal: controller.signal,
-          })
-          break
-        case "gemini":
-          response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ contents: [{ parts: [{ text: "hi" }] }] }),
-            signal: controller.signal,
-          })
-          break
-        case "groq":
-          response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "user", content: "hi" }], max_tokens: 10 }),
-            signal: controller.signal,
-          })
-          break
-        case "openrouter":
-          response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: "hi" }], max_tokens: 10 }),
-            signal: controller.signal,
-          })
-          break
-        default:
-          clearTimeout(timeout)
-          return NextResponse.json({ error: "Unsupported provider" }, { status: 400 })
+      if (provider !== "openrouter") {
+        clearTimeout(timeout)
+        return NextResponse.json({ error: "Unsupported provider" }, { status: 400 })
       }
+      response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "meta-llama/llama-3.3-70b-instruct:free", messages: [{ role: "user", content: "hi" }], max_tokens: 10 }),
+        signal: controller.signal,
+      })
     } finally {
       clearTimeout(timeout)
     }

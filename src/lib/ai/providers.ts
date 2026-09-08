@@ -9,8 +9,9 @@
  * the exact failure (auth / rate limit / timeout / network / provider
  * error / empty response) and produce a context-aware fallback.
  *
- * Model: defaults to "openrouter/free"; override with the optional
- * OPENROUTER_MODEL environment variable. The API key is NEVER logged.
+ * Model: free-model failover chain (see openrouter-manager.ts);
+ * direct callers default to the first free candidate unless
+ * OPENROUTER_MODEL overrides. The API key is NEVER logged.
  */
 import { AI } from "@/config/constants"
 import type { ChatMessage } from "@/types"
@@ -21,9 +22,13 @@ export function getOpenRouterApiKey(): string {
   return process.env.OPENROUTER_API_KEY?.trim() || ""
 }
 
-/** Default model "openrouter/free"; optional OPENROUTER_MODEL override. */
+/**
+ * Default model for single-shot callers. The failover manager
+ * (openrouter-manager.ts) uses its own free-candidate list; this default
+ * only applies to direct callOpenRouter uses and env overrides.
+ */
 export function getOpenRouterModel(): string {
-  return process.env.OPENROUTER_MODEL?.trim() || "openrouter/free"
+  return process.env.OPENROUTER_MODEL?.trim() || "meta-llama/llama-3.3-70b-instruct:free"
 }
 
 export interface OpenRouterConfig {
@@ -48,12 +53,18 @@ export interface OpenRouterProviderError extends Error {
     | "OPENROUTER_NETWORK_ERROR"
     | "OPENROUTER_PROVIDER_ERROR"
     | "OPENROUTER_EMPTY_RESPONSE"
+  statusCode?: number
 }
 
-function openRouterError(reasonCode: OpenRouterProviderError["reasonCode"], message: string): OpenRouterProviderError {
+function openRouterError(
+  reasonCode: OpenRouterProviderError["reasonCode"],
+  message: string,
+  statusCode?: number,
+): OpenRouterProviderError {
   // Never embed API keys or full request bodies in provider errors.
   const err = new Error(`[${reasonCode}] ${message}`) as OpenRouterProviderError
   err.reasonCode = reasonCode
+  if (statusCode !== undefined) err.statusCode = statusCode
   return err
 }
 
@@ -120,16 +131,25 @@ export async function callOpenRouter(
   if (!response.ok) {
     // Read the error body safely (truncated) — it never contains our key.
     const errBody = await response.text().catch(() => "")
-    if (response.status === 401) {
-      throw openRouterError("OPENROUTER_AUTH_FAILED", `OpenRouter authentication failed (401). ${errBody.slice(0, 200)}`)
+    if (response.status === 401 || response.status === 403) {
+      throw openRouterError("OPENROUTER_AUTH_FAILED", `OpenRouter authentication failed (${response.status}). ${errBody.slice(0, 200)}`, response.status)
+    }
+    if (response.status === 402) {
+      throw openRouterError("OPENROUTER_RATE_LIMITED", `OpenRouter credits exhausted (402). ${errBody.slice(0, 200)}`, response.status)
     }
     if (response.status === 429) {
-      throw openRouterError("OPENROUTER_RATE_LIMITED", `OpenRouter rate limit / quota exceeded (429). ${errBody.slice(0, 200)}`)
+      throw openRouterError("OPENROUTER_RATE_LIMITED", `OpenRouter rate limit / quota exceeded (429). ${errBody.slice(0, 200)}`, response.status)
+    }
+    if (response.status === 404) {
+      throw openRouterError("OPENROUTER_PROVIDER_ERROR", `OpenRouter model not found (404). ${errBody.slice(0, 200)}`, response.status)
+    }
+    if (response.status === 408) {
+      throw openRouterError("OPENROUTER_TIMEOUT", `OpenRouter request timeout (408). ${errBody.slice(0, 200)}`, response.status)
     }
     if (response.status >= 500) {
-      throw openRouterError("OPENROUTER_PROVIDER_ERROR", `OpenRouter provider error (${response.status}). ${errBody.slice(0, 200)}`)
+      throw openRouterError("OPENROUTER_PROVIDER_ERROR", `OpenRouter provider error (${response.status}). ${errBody.slice(0, 200)}`, response.status)
     }
-    throw openRouterError("OPENROUTER_PROVIDER_ERROR", `OpenRouter request failed (${response.status}). ${errBody.slice(0, 200)}`)
+    throw openRouterError("OPENROUTER_PROVIDER_ERROR", `OpenRouter request failed (${response.status}). ${errBody.slice(0, 200)}`, response.status)
   }
 
   const data = await response.json().catch(() => null)

@@ -35,6 +35,7 @@ import type { IncomingMessage } from "../src/messaging/types"
 const openrouterState = vi.hoisted(() => ({
   calls: [] as Array<{ url: string; body: { model: string; messages: Array<{ role: string; content: unknown }>; tools?: unknown } }>,
   failNext: false,
+  failAll: false,
 }))
 
 const openRouterStubResponse = (body: { messages: Array<{ role: string; content: unknown }> }) => {
@@ -50,6 +51,9 @@ const openRouterStubResponse = (body: { messages: Array<{ role: string; content:
 vi.stubGlobal("fetch", vi.fn(async (url: string | URL, init?: { method?: string; body?: string }) => {
   const body = init?.body ? JSON.parse(init.body) : {}
   openrouterState.calls.push({ url: String(url), body })
+  if (openrouterState.failAll) {
+    throw new Error("simulated provider outage (all models)")
+  }
   if (openrouterState.failNext) {
     openrouterState.failNext = false
     throw new Error("simulated provider outage")
@@ -244,6 +248,7 @@ beforeEach(() => {
   db.patients = 0
   openrouterState.calls = []
   openrouterState.failNext = false
+  openrouterState.failAll = false
 })
 
 // ===========================================================================
@@ -287,7 +292,7 @@ describe("Short-term context stays bounded", () => {
     expect(outbound).toBe("AI_REPLY:How much?")
     // Bounded: system + [context header] + <=4 window + current message.
     const req = openrouterState.calls[openrouterState.calls.length - 1]
-    expect(req.body.model).toBe("openrouter/free")
+    expect(req.body.model).toBe("meta-llama/llama-3.3-70b-instruct:free")
     expect(req.body.messages.length).toBeLessThanOrEqual(8)
     expect(req.body.messages[0].role).toBe("system")
   })
@@ -343,12 +348,20 @@ describe("Appointment state machine handles booking deterministically", () => {
 // Failure paths: fallback happens ONLY after real failure, never silently
 // ===========================================================================
 describe("Fallback contract", () => {
-  it("provider failure → scripted fallback (observable), AI response absent", async () => {
+  it("single-model outage → failover recovers with an AI reply", async () => {
     openrouterState.failNext = true
     const { outbound, aiCallsBefore } = await turn("I have stomach pain", 1)
-    // The provider WAS attempted — the stub records the request before
-    // the simulated outage throws.
-    expect(aiCallsDuringTurn(aiCallsBefore)).toBe(1)
+    // First candidate threw; the failover manager tried the next model.
+    expect(aiCallsDuringTurn(aiCallsBefore)).toBe(2)
+    expect(outbound).toContain("AI_REPLY:")
+  })
+
+  it("provider failure → scripted fallback (observable), AI response absent", async () => {
+    openrouterState.failAll = true
+    const { outbound, aiCallsBefore } = await turn("I have stomach pain", 1)
+    // Every failover candidate was attempted — the stub records each
+    // request before the simulated outage throws.
+    expect(aiCallsDuringTurn(aiCallsBefore)).toBeGreaterThan(1)
     // Response is the intentional symptom fallback — useful, safe, and
     // never an AI echo.
     expect(outbound).not.toContain("AI_REPLY:")

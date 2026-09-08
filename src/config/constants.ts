@@ -28,29 +28,29 @@ export const AI = {
   // re-sending the whole conversation. See src/messaging/ai/context.ts.
   maxHistoryMessages: 4,
   timeout: 15000,
-  // Single provider: OpenRouter. Default model is the OpenRouter free
-  // router; override with OPENROUTER_MODEL (see src/lib/ai/providers.ts).
-  defaultModel: "openrouter/free",
+  // Single provider: OpenRouter free-model failover chain (see
+  // src/lib/ai/openrouter-manager.ts). Override candidates with
+  // OPENROUTER_MODELS or OPENROUTER_MODEL.
+  defaultModel: "meta-llama/llama-3.3-70b-instruct:free",
   defaultTemperature: 0.7,
   defaultMaxTokens: 512,
 } as const
 
 export const PROVIDERS = [
-  { value: "openai", label: "OpenAI" },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "gemini", label: "Google Gemini" },
-  { value: "groq", label: "Groq" },
   { value: "openrouter", label: "OpenRouter" },
 ] as const
 
 export type AIProvider = (typeof PROVIDERS)[number]["value"]
 
 export const PROVIDER_MODELS: Record<AIProvider, string[]> = {
-  openai: ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo"],
-  anthropic: ["claude-3-haiku-20240307", "claude-3-sonnet-20240229", "claude-3-opus-20240229"],
-  gemini: ["gemini-1.5-flash", "gemini-1.5-pro"],
-  groq: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
-  openrouter: ["openai/gpt-4o-mini", "openai/gpt-4o", "anthropic/claude-3.5-sonnet"],
+  openrouter: [
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "google/gemini-2.0-flash-exp:free",
+    "mistralai/mistral-small-3.1-24b-instruct:free",
+    "qwen/qwen-2.5-72b-instruct:free",
+    "nousresearch/hermes-3-llama-3.1-70b:free",
+    "google/gemma-3-27b-it:free",
+  ],
 }
 
 export const COLORS = {

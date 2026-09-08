@@ -37,8 +37,9 @@ describe("Static provider audit: OpenRouter is the ONLY provider", () => {
     ]) {
       expect(src.includes(banned), `src/lib/ai/index.ts must not reference "${banned}"`).toBe(false)
     }
-    // The single provider must be present.
-    expect(src).toContain("callOpenRouter")
+    // The single provider must be present — via the failover manager.
+    expect(src).toContain("callOpenRouterWithFailover")
+    expect(src).toContain("openrouter-manager")
     expect(src).toContain("getOpenRouterConfig")
   })
 
@@ -57,7 +58,14 @@ describe("Static provider audit: OpenRouter is the ONLY provider", () => {
       expect(src.includes(banned), `src/lib/ai/providers.ts must not reference "${banned}"`).toBe(false)
     }
     expect(src).toContain("openrouter.ai/api/v1/chat/completions")
-    expect(src).toContain("openrouter/free")
+  })
+
+  it("ai/openrouter-manager.ts is the multi-model failover path", () => {
+    const src = fs.readFileSync(path.join(AI_DIR, "openrouter-manager.ts"), "utf8")
+    expect(src).toContain("callOpenRouterWithFailover")
+    expect(src).toContain("OPENROUTER_MODELS")
+    expect(src).toContain(":free")
+    expect(src.includes("openrouter/free,"), "must not use the openrouter/free alias as a model candidate").toBe(false)
   })
 
   it("no active source file references PICO_LLM_API_URL or the BuildPico API", () => {
