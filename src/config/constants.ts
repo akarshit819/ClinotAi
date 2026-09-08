@@ -28,10 +28,9 @@ export const AI = {
   // re-sending the whole conversation. See src/messaging/ai/context.ts.
   maxHistoryMessages: 4,
   timeout: 15000,
-  // Single provider: OpenRouter free-model failover chain (see
-  // src/lib/ai/openrouter-manager.ts). Override candidates with
-  // OPENROUTER_MODELS or OPENROUTER_MODEL.
-  defaultModel: "meta-llama/llama-3.3-70b-instruct:free",
+  // Single provider: OpenRouter. TEMP SINGLE-MODEL TEST — pinned to
+  // google/gemma-4-31b-it:free (see src/lib/ai/openrouter-manager.ts).
+  defaultModel: "google/gemma-4-31b-it:free",
   defaultTemperature: 0.7,
   defaultMaxTokens: 512,
 } as const
@@ -43,14 +42,8 @@ export const PROVIDERS = [
 export type AIProvider = (typeof PROVIDERS)[number]["value"]
 
 export const PROVIDER_MODELS: Record<AIProvider, string[]> = {
-  openrouter: [
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "google/gemini-2.0-flash-exp:free",
-    "mistralai/mistral-small-3.1-24b-instruct:free",
-    "qwen/qwen-2.5-72b-instruct:free",
-    "nousresearch/hermes-3-llama-3.1-70b:free",
-    "google/gemma-3-27b-it:free",
-  ],
+  // TEMP SINGLE-MODEL TEST: only the pinned model (see openrouter-manager.ts).
+  openrouter: ["google/gemma-4-31b-it:free"],
 }
 
 export const COLORS = {

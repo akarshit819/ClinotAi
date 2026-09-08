@@ -28,7 +28,8 @@ export function getOpenRouterApiKey(): string {
  * only applies to direct callOpenRouter uses and env overrides.
  */
 export function getOpenRouterModel(): string {
-  return process.env.OPENROUTER_MODEL?.trim() || "meta-llama/llama-3.3-70b-instruct:free"
+  // TEMP SINGLE-MODEL TEST: pinned model (see openrouter-manager.ts).
+  return process.env.OPENROUTER_MODEL?.trim() || "google/gemma-4-31b-it:free"
 }
 
 export interface OpenRouterConfig {

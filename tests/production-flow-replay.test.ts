@@ -292,7 +292,8 @@ describe("Short-term context stays bounded", () => {
     expect(outbound).toBe("AI_REPLY:How much?")
     // Bounded: system + [context header] + <=4 window + current message.
     const req = openrouterState.calls[openrouterState.calls.length - 1]
-    expect(req.body.model).toBe("meta-llama/llama-3.3-70b-instruct:free")
+    // TEMP SINGLE-MODEL TEST: the exact pinned runtime model string.
+    expect(req.body.model).toBe("google/gemma-4-31b-it:free")
     expect(req.body.messages.length).toBeLessThanOrEqual(8)
     expect(req.body.messages[0].role).toBe("system")
   })
@@ -348,20 +349,22 @@ describe("Appointment state machine handles booking deterministically", () => {
 // Failure paths: fallback happens ONLY after real failure, never silently
 // ===========================================================================
 describe("Fallback contract", () => {
-  it("single-model outage → failover recovers with an AI reply", async () => {
+  it("single-model outage → scripted fallback (observable), AI response absent", async () => {
+    // TEMP SINGLE-MODEL TEST: only the pinned model exists, so one failed
+    // attempt exhausts the chain and falls back.
     openrouterState.failNext = true
     const { outbound, aiCallsBefore } = await turn("I have stomach pain", 1)
-    // First candidate threw; the failover manager tried the next model.
-    expect(aiCallsDuringTurn(aiCallsBefore)).toBe(2)
-    expect(outbound).toContain("AI_REPLY:")
+    expect(aiCallsDuringTurn(aiCallsBefore)).toBe(1)
+    expect(outbound).not.toContain("AI_REPLY:")
+    expect(outbound).toContain("can't give medical advice")
+    expect(outbound).toContain("book an appointment")
   })
 
   it("provider failure → scripted fallback (observable), AI response absent", async () => {
     openrouterState.failAll = true
     const { outbound, aiCallsBefore } = await turn("I have stomach pain", 1)
-    // Every failover candidate was attempted — the stub records each
-    // request before the simulated outage throws.
-    expect(aiCallsDuringTurn(aiCallsBefore)).toBeGreaterThan(1)
+    // TEMP SINGLE-MODEL TEST: the pinned model is the only candidate.
+    expect(aiCallsDuringTurn(aiCallsBefore)).toBe(1)
     // Response is the intentional symptom fallback — useful, safe, and
     // never an AI echo.
     expect(outbound).not.toContain("AI_REPLY:")

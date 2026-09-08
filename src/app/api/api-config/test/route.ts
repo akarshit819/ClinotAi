@@ -42,7 +42,7 @@ export async function POST(req: Request) {
       response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "meta-llama/llama-3.3-70b-instruct:free", messages: [{ role: "user", content: "hi" }], max_tokens: 10 }),
+        body: JSON.stringify({ model: "google/gemma-4-31b-it:free", messages: [{ role: "user", content: "hi" }], max_tokens: 10 }),
         signal: controller.signal,
       })
     } finally {

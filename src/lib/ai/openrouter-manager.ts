@@ -8,19 +8,16 @@ import {
 } from "./providers"
 import { logger } from "@/lib/logger"
 
-// OpenRouter FREE model candidates — the SINGLE source of truth for the
-// failover chain. Each entry MUST be a real OpenRouter model ID suitable
-// for text chat (instruction/chat-capable, not image-only/audio-only).
-// Override at runtime with OPENROUTER_MODELS (comma-separated, preferred)
-// or legacy OPENROUTER_MODEL (single). Env entries win over defaults.
-export const DEFAULT_FREE_CANDIDATES: string[] = [
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "google/gemini-2.0-flash-exp:free",
-  "mistralai/mistral-small-3.1-24b-instruct:free",
-  "qwen/qwen-2.5-72b-instruct:free",
-  "nousresearch/hermes-3-llama-3.1-70b:free",
-  "google/gemma-3-27b-it:free",
-]
+// TEMP SINGLE-MODEL TEST (revert to restore the free-model failover
+// chain): OpenRouter is the ONLY provider and exactly ONE model is used.
+// The previous 6-model DEFAULT_FREE_CANDIDATES list is parked in the git
+// history (commit 02410f5) — do NOT re-add old models here without
+// explicitly ending this single-model experiment.
+export const SINGLE_MODEL_PIN = "google/gemma-4-31b-it:free"
+
+// OpenRouter model candidate — TEMPORARILY a single pinned model. This is
+// the SINGLE source of truth for the runtime model string.
+export const DEFAULT_FREE_CANDIDATES: string[] = [SINGLE_MODEL_PIN]
 
 export type OpenRouterFailoverReason =
   | "OPENROUTER_NOT_CONFIGURED"
@@ -154,18 +151,19 @@ function dedupe(models: string[]): string[] {
   return out
 }
 
-/** Ordered, deduplicated candidate list for this call (test-visible). */
+/**
+ * Ordered candidate list for this call (test-visible).
+ *
+ * TEMP SINGLE-MODEL TEST: always returns exactly [SINGLE_MODEL_PIN].
+ * Env overrides (OPENROUTER_MODELS / OPENROUTER_MODEL) and sticky
+ * last-successful-model are DISABLED so no old model can be attempted.
+ * Revert this function to restore multi-model failover.
+ */
 export function getOpenRouterCandidates(): string[] {
-  const out: string[] = []
-  for (const m of dedupe(parseModelOverride())) if (!out.includes(m)) out.push(m)
-  // Sticky success: prefer the last working model (unless it is already
-  // first or on cooldown — cooldown is checked per-attempt at call time).
-  if (lastSuccessfulModel) {
-    const sticky = normalizeModelId(lastSuccessfulModel)
-    if (sticky && !out.includes(sticky)) out.unshift(sticky)
-  }
-  for (const m of DEFAULT_FREE_CANDIDATES) if (!out.includes(m)) out.push(m)
-  return out
+  // NOTE: parseModelOverride()/dedupe()/lastSuccessfulModel are intentionally
+  // unused during this single-model test — they power the failover chain
+  // that this pin temporarily replaces. Do not delete them.
+  return [SINGLE_MODEL_PIN]
 }
 
 /**
@@ -232,6 +230,13 @@ export async function callOpenRouterWithFailover(
       attempt: attemptNum,
       totalModels: candidates.length,
       aiCallAttempted: true,
+    })
+    // Explicit pre-request line for the single-model test: the exact
+    // runtime model string must read google/gemma-4-31b-it:free.
+    logger.info(`[CLINOT_AI_TRACE] provider=openrouter model=${model}`, {
+      traceId,
+      attempt: attemptNum,
+      totalModels: candidates.length,
     })
 
     try {
