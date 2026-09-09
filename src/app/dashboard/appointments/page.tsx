@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
 import { Badge } from "@/components/ui/Badge"
-import { Calendar as CalendarIcon, Loader2, ChevronLeft, ChevronRight, Clock, User, Phone, X, CheckCircle, XCircle } from "lucide-react"
+import { Calendar as CalendarIcon, Loader2, ChevronLeft, ChevronRight, Clock, User, Phone, X, CheckCircle, XCircle, Trash2 } from "lucide-react"
 import { formatDateTime } from "@/lib/utils"
 import { apiFetch } from "@/lib/client-auth"
 
@@ -45,6 +45,39 @@ export default function AppointmentsPage() {
     return d
   })
   const [selected, setSelected] = useState<Appointment | null>(null)
+  // Manual delete flow: which appointment is awaiting confirmation in the
+  // popup, and which delete request is in flight. Nothing auto-deletes —
+  // rows disappear only after the user confirms here.
+  const [pendingDelete, setPendingDelete] = useState<Appointment | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const confirmDelete = async () => {
+    if (!pendingDelete || deleting) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      const res = await apiFetch("/api/appointments", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: pendingDelete.id }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !(data && data.success)) {
+        throw new Error((data && data.error) || `Delete failed (${res.status})`)
+      }
+      // Soft delete on the server: drop it from the visible list only.
+      setAppointments((prev) => prev.filter((a) => a.id !== pendingDelete.id))
+      if (selected?.id === pendingDelete.id) setSelected(null)
+      setPendingDelete(null)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Delete failed"
+      console.error("[dashboard/appointments] delete failed:", message)
+      setDeleteError(message)
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   useEffect(() => {
     // Defensive: the API returns { error } shapes on auth/DB failures.
@@ -201,6 +234,15 @@ export default function AppointmentsPage() {
                         <span className="text-sm font-semibold text-navy-900 dark:text-navy-100">{a.patientName || "Unnamed"}</span>
                         <Badge variant={a.isEmergency ? "danger" : "neutral"}>{a.isEmergency ? "Emergency" : "Routine"}</Badge>
                         <Badge variant={a.status === "confirmed" ? "success" : a.status === "pending" ? "warning" : "danger"}>{a.status}</Badge>
+                        <span className="flex-1" />
+                        <button
+                          aria-label={`Delete appointment for ${a.patientName || "patient"}`}
+                          title="Delete appointment"
+                          onClick={(e) => { e.stopPropagation(); setDeleteError(null); setPendingDelete(a) }}
+                          className="p-1.5 rounded-lg text-navy-300 hover:text-red-500 hover:bg-red-50 dark:text-navy-600 dark:hover:text-red-400 dark:hover:bg-red-900/20"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
                       <div className="flex items-center gap-3 text-xs text-navy-400 dark:text-navy-500">
                         {a.date && <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{fmtDate(new Date(a.date))} {a.time || ""}</span>}
@@ -260,8 +302,64 @@ export default function AppointmentsPage() {
                 <XCircle className="h-4 w-4" /> Cancel Appointment
               </Button>
             )}
+            <Button
+              onClick={() => { setDeleteError(null); setPendingDelete(selected) }}
+              variant="secondary"
+              className="w-full !text-red-500 hover:!bg-red-50 dark:hover:!bg-red-900/20"
+            >
+              <Trash2 className="h-4 w-4" /> Delete Appointment
+            </Button>
           </CardContent>
         </Card>
+      )}
+
+      {pendingDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/50 p-4"
+          onClick={() => { if (!deleting) setPendingDelete(null) }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirm appointment deletion"
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl bg-white dark:bg-navy-800 p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-50 dark:bg-red-900/30">
+                <Trash2 className="h-5 w-5 text-red-500" />
+              </div>
+              <h2 className="text-base font-semibold text-navy-900 dark:text-navy-100">Delete appointment?</h2>
+            </div>
+            <p className="text-sm text-navy-500 dark:text-navy-400">
+              {pendingDelete.patientName || "This appointment"}
+              {pendingDelete.date ? ` on ${fmtDate(new Date(pendingDelete.date))}` : ""}
+              {pendingDelete.time ? ` at ${pendingDelete.time}` : ""} will be
+              removed from the dashboard. The record stays safe in the
+              database — nothing is permanently erased.
+            </p>
+            {deleteError && (
+              <p className="mt-3 text-sm text-red-500">{deleteError}</p>
+            )}
+            <div className="mt-5 flex gap-2">
+              <Button
+                variant="secondary"
+                className="flex-1"
+                onClick={() => setPendingDelete(null)}
+                disabled={deleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="flex-1 !bg-red-500 hover:!bg-red-600"
+                onClick={confirmDelete}
+                disabled={deleting}
+              >
+                {deleting ? "Deleting…" : "Delete"}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

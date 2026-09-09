@@ -649,6 +649,7 @@ export async function runAiReceptionist(
             clinicId: context.clinicId,
             phone,
             status: { in: ["pending", "confirmed", "in_progress"] },
+            isDeleted: false,
           },
           orderBy: { createdAt: "desc" },
           select: { preferredDate: true, preferredTime: true, patientName: true, status: true },

@@ -183,6 +183,8 @@ async function getBookedSlots(
     clinicId,
     status: { in: ["pending", "confirmed", "in_progress"] },
     isEmergency: false,
+    // Manually soft-deleted rows never occupy a slot.
+    isDeleted: false,
     preferredDate: {
       gte: startDateStr,
       lte: endDateStr,

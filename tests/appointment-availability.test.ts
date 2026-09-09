@@ -45,6 +45,10 @@ vi.mock("@/lib/db", () => {
         findMany: vi.fn(async () => []),
         findUnique: vi.fn(async () => null),
         create: vi.fn(async (args: { data: Record<string, unknown> }) => ({ id: "appt-1", ...args.data })),
+        update: vi.fn(async (args: { where: { id: string }; data: Record<string, unknown> }) => ({
+          id: args.where.id,
+          ...args.data,
+        })),
       },
       patient: {
         findFirst: vi.fn(async () => null),
@@ -383,6 +387,127 @@ describe("Bug 3/TEST 7-11: dashboard API returns frontend-compatible rows", () =
     const body = await res.json()
     expect(Array.isArray(body)).toBe(false)
     expect(body.error).toBeTruthy()
+  })
+})
+
+describe("Soft delete: manual dashboard deletes hide rows without destroying data", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it("DELETE soft-deletes: flags set, row preserved, success returned", async () => {
+    const { prisma } = await import("../src/lib/db")
+    ;(prisma.appointment.findFirst as any).mockResolvedValue({ id: "appt-1" })
+    const updateMock = (prisma.appointment.update as any).mockResolvedValue({ id: "appt-1" })
+
+    const { DELETE } = await import("../src/app/api/appointments/route")
+    const res = await DELETE(
+      new Request("http://localhost/api/appointments", {
+        method: "DELETE",
+        body: JSON.stringify({ id: "appt-1" }),
+      }),
+    )
+    const body = await res.json()
+    expect(body.success).toBe(true)
+    expect(body.id).toBe("appt-1")
+    // Soft delete: flags set, never a destroy/remove call.
+    expect(updateMock).toHaveBeenCalledWith({
+      where: { id: "appt-1" },
+      data: expect.objectContaining({ isDeleted: true }),
+    })
+    const data = updateMock.mock.calls[0][0].data
+    expect(data.deletedAt).toBeInstanceOf(Date)
+    // Static guard: the route must contain no hard-delete path anywhere.
+    const fs = await import("node:fs")
+    const path = await import("node:path")
+    const routeSrc = fs.readFileSync(path.join(process.cwd(), "src", "app", "api", "appointments", "route.ts"), "utf8")
+    expect(routeSrc).not.toMatch(/appointment\.(delete|deleteMany)\s*\(/)
+    expect(routeSrc).not.toMatch(/prisma\.\$executeRaw/)
+  })
+
+  it("DELETE without id → 400; unknown id → 404", async () => {
+    const { prisma } = await import("../src/lib/db")
+    const { DELETE } = await import("../src/app/api/appointments/route")
+    const bad = await DELETE(
+      new Request("http://localhost/api/appointments", { method: "DELETE", body: JSON.stringify({}) }),
+    )
+    expect(bad.status).toBe(400)
+    ;(prisma.appointment.findFirst as any).mockResolvedValue(null)
+    const missing = await DELETE(
+      new Request("http://localhost/api/appointments", {
+        method: "DELETE",
+        body: JSON.stringify({ id: "nope" }),
+      }),
+    )
+    expect(missing.status).toBe(404)
+  })
+
+  it("GET excludes soft-deleted rows from the dashboard list", async () => {
+    const { prisma } = await import("../src/lib/db")
+    const findManyMock = (prisma.appointment.findMany as any).mockResolvedValue([])
+    const { GET } = await import("../src/app/api/appointments/route")
+    await GET(new Request("http://localhost/api/appointments"))
+    expect(findManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ isDeleted: false }) }),
+    )
+  })
+
+  it("a deleted appointment never blocks rebooking the same slot", async () => {
+    const { prisma } = await import("../src/lib/db")
+    const { bookAppointmentFromDraft } = await import("../src/lib/appointment/booking")
+    // Only a DELETED row exists for this phone+slot → must not count.
+    ;(prisma.appointment.findFirst as any).mockImplementation(async (args: any) => {
+      if (args?.where?.isDeleted === false) return null
+      return { id: "appt-deleted", patientId: "pat-9", doctor: "prov-1" }
+    })
+    ;(prisma.appointment.findMany as any).mockResolvedValue([])
+    ;(prisma.appointment.findUnique as any).mockResolvedValue({ id: "appt-new" })
+
+    const result = await bookAppointmentFromDraft({
+      clinicId: "clinic-1",
+      draft: {
+        active: true,
+        status: "ready" as const,
+        expectedField: null,
+        patientName: "Akarshit",
+        patientPhone: "8700879404",
+        reason: "Headache",
+        preferredDate: BOOKED_DATE,
+        preferredTime: "16:00",
+        history: [],
+      },
+      whatsappPhone: "8700879404",
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // Fresh booking — not a reuse of the deleted row.
+    expect(result.duplicate).toBe(false)
+    expect(result.appointmentId).toBe("appt-1")
+  })
+
+  it("duplicate guard queries exclude deleted rows", async () => {
+    const { prisma } = await import("../src/lib/db")
+    const { bookAppointmentFromDraft } = await import("../src/lib/appointment/booking")
+    ;(prisma.appointment.findFirst as any).mockResolvedValue(null)
+    ;(prisma.appointment.findMany as any).mockResolvedValue([])
+    ;(prisma.appointment.findUnique as any).mockResolvedValue({ id: "appt-1" })
+    await bookAppointmentFromDraft({
+      clinicId: "clinic-1",
+      draft: {
+        active: true,
+        status: "ready" as const,
+        expectedField: null,
+        patientName: "Akarshit",
+        patientPhone: "8700879404",
+        reason: "Headache",
+        preferredDate: BOOKED_DATE,
+        preferredTime: "16:00",
+        history: [],
+      },
+      whatsappPhone: "8700879404",
+    })
+    const dupCall = (prisma.appointment.findFirst as any).mock.calls[0][0]
+    expect(dupCall.where).toMatchObject({ isDeleted: false })
   })
 })
 

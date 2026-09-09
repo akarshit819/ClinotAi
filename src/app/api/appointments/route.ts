@@ -13,7 +13,8 @@ export async function GET(request: Request) {
     const { clinicId } = await getClinicId(request)
     logger.info("[DASHBOARD] DASHBOARD_APPOINTMENTS_QUERY_STARTED", { clinicId })
     const appointments = await prisma.appointment.findMany({
-      where: { clinicId },
+      // Soft-deleted rows stay in the DB but never list.
+      where: { clinicId, isDeleted: false },
       orderBy: { createdAt: "desc" },
       take: 50,
       include: {
@@ -106,6 +107,42 @@ export async function POST(req: Request) {
     }
   } catch (error) {
     return handleApiError(error, "Failed to create appointment")
+  }
+}
+
+export async function DELETE(req: Request) {
+  // Manual soft delete from the dashboard: hides the appointment while
+  // keeping the row (and its history) safe in the database. Nothing in
+  // the system auto-deletes — only this endpoint, only on explicit user
+  // action from the dashboard confirmation dialog.
+  try {
+    const { clinicId } = await getClinicId(req)
+    const body = await req.json().catch(() => ({}))
+    const { id } = body as { id?: string }
+
+    if (!id) {
+      return NextResponse.json({ error: "Appointment ID is required" }, { status: 400 })
+    }
+
+    const existing = await prisma.appointment.findFirst({
+      where: { id, clinicId, isDeleted: false },
+      select: { id: true },
+    })
+    if (!existing) {
+      return NextResponse.json({ error: "Appointment not found" }, { status: 404 })
+    }
+
+    const appointment = await prisma.appointment.update({
+      where: { id },
+      data: { isDeleted: true, deletedAt: new Date() },
+    })
+    logger.info("[DASHBOARD] Appointment soft-deleted by dashboard user", {
+      clinicId,
+      appointmentId: appointment.id,
+    })
+    return NextResponse.json({ success: true, id: appointment.id })
+  } catch (error) {
+    return handleApiError(error, "Failed to delete appointment")
   }
 }
 

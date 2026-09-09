@@ -116,14 +116,17 @@ describeMaybe("Production migration contract (real PostgreSQL)", () => {
       // but in no migration, so every appointment query failed in
       // production. The 20260909000000 migration must provide it.
       const apptColumns = await client.query(
-        `SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name = 'Appointment' AND table_schema = 'public'`,
+        `SELECT column_name, is_nullable, column_default FROM information_schema.columns WHERE table_name = 'Appointment' AND table_schema = 'public'`,
       )
       const apptColNames = new Set(apptColumns.rows.map((r) => r.column_name))
-      for (const col of ["id", "patientName", "phone", "reason", "preferredDate", "preferredTime", "endTime", "doctor", "status", "patientId", "clinicId"]) {
+      for (const col of ["id", "patientName", "phone", "reason", "preferredDate", "preferredTime", "endTime", "doctor", "status", "patientId", "clinicId", "isDeleted", "deletedAt"]) {
         expect(apptColNames.has(col), `Appointment.${col} must exist after migrate deploy`).toBe(true)
       }
       const endTimeRow = apptColumns.rows.find((r) => r.column_name === "endTime")
       expect(endTimeRow.is_nullable).toBe("YES")
+      const isDeletedRow = apptColumns.rows.find((r) => r.column_name === "isDeleted")
+      expect(isDeletedRow.is_nullable).toBe("NO")
+      expect(isDeletedRow.column_default).toContain("false")
     } finally {
       await client.end()
     }

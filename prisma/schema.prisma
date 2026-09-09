@@ -444,6 +444,8 @@ model Appointment {
   notes         String?
   isEmergency   Boolean  @default(false)
   status        String   @default("pending")
+  isDeleted     Boolean  @default(false)
+  deletedAt     DateTime?
   patientId     String?
   patient       Patient? @relation(fields: [patientId], references: [id])
   clinicId      String

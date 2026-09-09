@@ -23,6 +23,8 @@ export interface DashboardAppointment {
   providerName: string | null
   isEmergency: boolean
   status: string
+  isDeleted?: boolean
+  deletedAt?: unknown
   createdAt: unknown
 }
 

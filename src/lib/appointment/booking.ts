@@ -100,6 +100,8 @@ export async function bookAppointmentFromDraft(req: BookingRequest): Promise<Boo
         preferredDate: date,
         preferredTime: time,
         status: { in: ACTIVE_APPOINTMENT_STATUSES },
+        // Manually deleted rows never block rebooking.
+        isDeleted: false,
       },
       select: { id: true, patientId: true, doctor: true },
     })
@@ -309,6 +311,7 @@ export async function bookAppointmentFromDraft(req: BookingRequest): Promise<Boo
             preferredDate: date,
             preferredTime: time,
             status: { in: ACTIVE_APPOINTMENT_STATUSES },
+            isDeleted: false,
           },
           select: { id: true, patientId: true, doctor: true },
         })
@@ -465,6 +468,7 @@ async function findExactConflicts(
         preferredDate: date,
         preferredTime: time,
         status: { in: ACTIVE_APPOINTMENT_STATUSES },
+        isDeleted: false,
       },
       select: { id: true },
     })
