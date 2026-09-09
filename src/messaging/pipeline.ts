@@ -3,6 +3,7 @@ import { getConnector } from "./connectors/registry"
 import { getCredentials } from "@/integrations/token-store"
 import { resolvePatient } from "./patient/identity"
 import { runAiReceptionist } from "./ai/receptionist"
+import { sanitizeOutboundText } from "./sanitize"
 import { shouldNotifyClinic, sendNotification } from "./notifications/service"
 import { enqueueMessage } from "@/integrations/whatsapp/delivery"
 import { createTextPayload } from "@/integrations/whatsapp/api"
@@ -239,13 +240,22 @@ export async function processIncomingMessage(
     requiresClinic: aiResult.requiresClinic,
   })
 
+  // Defensive safeguard: internal JSON / tool payloads / placeholder
+  // tokens must NEVER reach the patient (production incident). The
+  // sanitized text is what gets stored AND queued for delivery.
+  const sanitized = sanitizeOutboundText(aiResult.response || "", {
+    conversationId: conversation.id,
+    clinicId,
+  })
+  const outboundText = sanitized.text
+
   // Always store the AI response (even if empty — for audit trail)
   const outgoing: IncomingMessage = {
     platform: message.platform,
     channelId: message.channelId,
     sourceMessageId: `resp-${storedMessageId}`,
     from: { id: "clinot-ai", name: "Clinot AI" },
-    content: aiResult.response,
+    content: outboundText,
     timestamp: new Date(),
   }
 
@@ -292,13 +302,14 @@ export async function processIncomingMessage(
     sendNotification(notification)
   }
 
-  // Send the outbound reply only if AI produced a response and the clinic doesn't need to handle it
-  if (!aiResult.requiresClinic && aiResult.response && aiResult.response.trim()) {
+  // Send the outbound reply only if AI produced a response and the clinic doesn't need to handle it.
+  // NOTE: the SANITIZED text is sent — never the raw model output.
+  if (!aiResult.requiresClinic && outboundText && outboundText.trim()) {
     if (message.platform === "whatsapp") {
       // Use durable job queue for WhatsApp — ensures retry on failure, never lost
       const credentials = await getPlatformCredentials(clinicId, message.platform)
       if (credentials) {
-        const waPayload = createTextPayload(message.channelId, aiResult.response)
+        const waPayload = createTextPayload(message.channelId, outboundText)
         const outboundJobId = await enqueueMessage(
           clinicId,
           message.channelId,
@@ -314,7 +325,7 @@ export async function processIncomingMessage(
           conversationId: conversation.id,
           outboundJobId,
           to: message.channelId,
-          responseLength: aiResult.response.length,
+          responseLength: outboundText.length,
         })
       } else {
         logger.error("[OUTBOUND-JOB] No WhatsApp credentials — outbound message cannot be sent", {
@@ -336,7 +347,7 @@ export async function processIncomingMessage(
             platform: message.platform,
             direction: "outgoing",
             role: "assistant",
-            content: aiResult.response,
+            content: outboundText,
             intent: aiResult.intent,
             confidence: aiResult.confidence,
             status: "ai_responded",
@@ -355,7 +366,7 @@ export async function processIncomingMessage(
         }
       }
     }
-  } else if (!aiResult.requiresClinic && (!aiResult.response || !aiResult.response.trim())) {
+  } else if (!aiResult.requiresClinic && (!outboundText || !outboundText.trim())) {
     logger.error("[OUTBOUND-JOB] AI produced empty response — no message sent to patient", {
       clinicId,
       conversationId: conversation.id,
@@ -365,7 +376,7 @@ export async function processIncomingMessage(
 
   return {
     conversationId: conversation.id,
-    response: aiResult.response,
+    response: outboundText,
     requiresClinic: aiResult.requiresClinic,
   }
 }

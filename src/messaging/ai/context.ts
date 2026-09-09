@@ -248,10 +248,14 @@ export function buildShortTermContext(input: BuildContextInput): ChatMessage[] {
 
 // === Appointment draft summary ==========================================
 //
-// One short sentence: "name=Akarshit, phone set, reason set,
-// date=2026-09-05, time=16:00, awaiting=date". The receptionist
-// passes the active draft to this function; it returns null when
-// nothing is set yet.
+// One short sentence with REAL values only, e.g.:
+//   "name=Akarshit, phone=8700879404, reason="leg pain",
+//    date=12 September 2026, time=4:00 PM, awaiting=confirmation".
+//
+// NEVER emit placeholder tokens like "phone set" / "reason set": the
+// model copies them verbatim into user-facing JSON (production
+// incident). Unset fields are simply omitted. This line is INTERNAL
+// context — the model must still reply in plain human language.
 
 export function summarizeAppointmentDraft(draft: {
   patientName?: string
@@ -260,6 +264,7 @@ export function summarizeAppointmentDraft(draft: {
   preferredDate?: string
   preferredTime?: string
   expectedField?: string | null
+  status?: string
 }): string | null {
   if (
     !draft.patientName &&
@@ -270,11 +275,15 @@ export function summarizeAppointmentDraft(draft: {
   }
   const parts: string[] = []
   if (draft.patientName) parts.push(`name=${draft.patientName}`)
-  if (draft.patientPhone) parts.push(`phone set`)
-  if (draft.reason) parts.push(`reason set`)
+  if (draft.patientPhone) parts.push(`phone=${draft.patientPhone}`)
+  if (draft.reason) parts.push(`reason="${draft.reason.slice(0, 60)}"`)
   if (draft.preferredDate) parts.push(`date=${draft.preferredDate}`)
   if (draft.preferredTime) parts.push(`time=${draft.preferredTime}`)
-  if (draft.expectedField) parts.push(`awaiting=${draft.expectedField}`)
+  if (draft.status === "ready" || !draft.expectedField) {
+    parts.push(`awaiting=confirmation`)
+  } else if (draft.expectedField) {
+    parts.push(`awaiting=${draft.expectedField}`)
+  }
   const s = parts.join(", ")
   if (s.length > APPOINTMENT_DRAFT_MAX_LEN) {
     return s.slice(0, APPOINTMENT_DRAFT_MAX_LEN - 1) + "…"

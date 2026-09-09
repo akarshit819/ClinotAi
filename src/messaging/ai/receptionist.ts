@@ -40,9 +40,21 @@ import {
   clearDraft,
   isDraftReady,
   isEmergencyOverride,
+  isConfirmationMessage,
+  isDenialMessage,
+  extractAllFields,
+  extractDate,
+  extractYearCorrection,
+  applyYearToDate,
+  formatDateHuman,
+  buildPrompt,
+  buildConfirmationSummary,
+  buildBookingConfirmation,
+  nextMissingField,
   type AppointmentDraft,
 } from "./appointment-state"
-import { classifyRoute, logRouteDecision, type Route } from "./route-classifier"
+import { bookAppointmentFromDraft } from "@/lib/appointment/booking"
+import { classifyRoute, logRouteDecision, isSlotAnswerFor, type Route } from "./route-classifier"
 import {
   buildShortTermContext,
   readContextState,
@@ -187,11 +199,305 @@ export async function runAiReceptionist(
   }
 
   // ========================================================================
+  // LEVEL 1.7: YEAR CORRECTION (deterministic — never generic fallback)
+  //   Active draft holds a date, the message carries an explicit year
+  //   ("not 2027, 2026", "it's 2026", bare "2026") but no parseable
+  //   full date. Rewrite the draft year in place and preserve everything
+  //   else.
+  // ========================================================================
+  if (existingDraft?.active && existingDraft.preferredDate) {
+    const messageDate = extractDate(message.content, new Date())
+    if (!messageDate) {
+      const correctedYear = extractYearCorrection(message.content)
+      if (correctedYear) {
+        const fixed = applyYearToDate(existingDraft.preferredDate, correctedYear)
+        if (fixed && fixed !== existingDraft.preferredDate) {
+          const updated: AppointmentDraft = {
+            ...existingDraft,
+            preferredDate: fixed,
+            updatedAt: new Date().toISOString(),
+            history: [
+              ...existingDraft.history,
+              { field: "preferredDate", value: fixed, source: "user_correction" },
+            ],
+          }
+          updated.expectedField = nextMissingField(updated)
+          updated.status = updated.expectedField ? "collecting" : "ready"
+          await prisma.conversation.update({
+            where: { id: context.conversation.id },
+            data: {
+              metadata: updateContextState(
+                writeDraftToMetadata(context.conversation.metadata, updated),
+                { currentTopic: "appointment", lastUserIntent: "correcting_date" },
+              ),
+              intent: "appointment",
+              status: "active",
+              summary: message.content.slice(0, 200),
+            },
+          })
+          logger.info("[APPOINTMENT] APPOINTMENT_DATE_PARSED (year correction)", {
+            conversationId: context.conversation.id,
+            clinicId: context.clinicId,
+            correctedYear,
+            preferredDate: fixed,
+          })
+          const followUp = updated.expectedField
+            ? buildPrompt(updated, updated.expectedField)
+            : buildConfirmationSummary(updated)
+          return {
+            response: `Got it — updated to ${formatDateHuman(fixed)}. ${followUp}`,
+            intent: "appointment",
+            confidence: 0.95,
+            requiresClinic: false,
+            responseSource: "APPOINTMENT",
+          }
+        }
+      }
+    }
+  }
+
+  // ========================================================================
+  // LEVEL 1.8: READY-DRAFT CONFIRMATION (deterministic booking)
+  //   All slots collected. The user must explicitly confirm before ANY
+  //   database write happens. Booking itself runs with NO LLM involved.
+  // ========================================================================
+  if (existingDraft?.active && isDraftReady(existingDraft)) {
+    logger.info("[APPOINTMENT] APPOINTMENT_READY_FOR_CONFIRMATION", {
+      conversationId: context.conversation.id,
+      clinicId: context.clinicId,
+      preferredDate: existingDraft.preferredDate,
+      preferredTime: existingDraft.preferredTime,
+    })
+
+    if (isConfirmationMessage(message.content)) {
+      logger.info("[APPOINTMENT] APPOINTMENT_CONFIRMATION_REQUESTED", {
+        conversationId: context.conversation.id,
+        clinicId: context.clinicId,
+      })
+      const result = await bookAppointmentFromDraft({
+        clinicId: context.clinicId,
+        draft: existingDraft,
+        whatsappPhone: message.from.phone,
+        whatsappName: message.from.name,
+      })
+      if (result.ok) {
+        const clearedDraft = clearDraft("completed")
+        await prisma.conversation.update({
+          where: { id: context.conversation.id },
+          data: {
+            metadata: updateContextState(
+              writeDraftToMetadata(context.conversation.metadata, clearedDraft),
+              { currentTopic: "appointment", lastUserIntent: "booking_confirmed" },
+            ),
+            intent: "appointment",
+            isEmergency: false,
+            status: "active",
+            summary: message.content.slice(0, 200),
+          },
+        })
+        const confirmationText = result.duplicate
+          ? `Your appointment for ${formatDateHuman(existingDraft.preferredDate!)} at ` +
+            `${existingDraft.preferredTime} is already confirmed — no duplicate was created. We'll see you then!`
+          : buildBookingConfirmation(existingDraft)
+        return {
+          response: confirmationText,
+          intent: "appointment",
+          confidence: 0.95,
+          requiresClinic: false,
+          responseSource: "APPOINTMENT",
+        }
+      }
+      if (result.reason === "slot_taken") {
+        // Reopen time collection; everything else is preserved.
+        const reopened: AppointmentDraft = {
+          ...existingDraft,
+          preferredTime: undefined,
+          expectedField: "time",
+          status: "collecting",
+          updatedAt: new Date().toISOString(),
+        }
+        await prisma.conversation.update({
+          where: { id: context.conversation.id },
+          data: {
+            metadata: updateContextState(
+              writeDraftToMetadata(context.conversation.metadata, reopened),
+              { currentTopic: "appointment", lastUserIntent: "slot_taken" },
+            ),
+            intent: "appointment",
+            status: "active",
+            summary: message.content.slice(0, 200),
+          },
+        })
+        return {
+          response:
+            "That time was just taken. What other time works for you? For example, '5 PM' or 'tomorrow morning'.",
+          intent: "appointment",
+          confidence: 0.9,
+          requiresClinic: false,
+          responseSource: "APPOINTMENT",
+        }
+      }
+      // no_provider / missing_fields / error: keep the draft, be honest,
+      // never pretend success.
+      logger.error("[APPOINTMENT] Booking failed at confirmation", {
+        conversationId: context.conversation.id,
+        clinicId: context.clinicId,
+        reason: result.reason,
+      })
+      return {
+        response:
+          "I couldn't complete the booking just now. Our team has your request " +
+          `for ${formatDateHuman(existingDraft.preferredDate!)} and will confirm shortly. ` +
+          "Is there anything else I can help with?",
+        intent: "appointment",
+        confidence: 0.8,
+        requiresClinic: true,
+        responseSource: "APPOINTMENT",
+      }
+    }
+
+    if (isDenialMessage(message.content)) {
+      const cleared = clearDraft("user_declined")
+      await prisma.conversation.update({
+        where: { id: context.conversation.id },
+        data: {
+          metadata: updateContextState(
+            writeDraftToMetadata(context.conversation.metadata, cleared),
+            { currentTopic: "general", lastUserIntent: "booking_declined" },
+          ),
+        },
+      })
+      logger.info("[APPOINTMENT] Booking declined — draft cleared", {
+        conversationId: context.conversation.id,
+        clinicId: context.clinicId,
+      })
+      return {
+        response: "No problem, I won't book it. How else can I help you today?",
+        intent: "general_question",
+        confidence: 0.9,
+        requiresClinic: false,
+        responseSource: "APPOINTMENT",
+      }
+    }
+
+    // Field correction while ready ("actually 4pm", "make it 13 September"):
+    // apply differing extracted values, then re-summarize or ask next.
+    // Each field is gated on isSlotAnswerFor so side questions ("where
+    // are you located?") can NEVER corrupt the draft — extractReason is
+    // intentionally permissive and would otherwise claim any sentence.
+    const correction = extractAllFields(message.content, new Date())
+    const corrected: AppointmentDraft = {
+      ...existingDraft,
+      history: [...existingDraft.history],
+    }
+    let changed = false
+    if (
+      correction.name &&
+      correction.name !== existingDraft.patientName &&
+      isSlotAnswerFor(message.content, "name", existingDraft)
+    ) {
+      corrected.patientName = correction.name
+      corrected.history.push({ field: "patientName", value: correction.name, source: "user_correction" })
+      changed = true
+    }
+    if (
+      correction.phone &&
+      correction.phone !== existingDraft.patientPhone &&
+      isSlotAnswerFor(message.content, "phone", existingDraft)
+    ) {
+      corrected.patientPhone = correction.phone
+      corrected.history.push({ field: "patientPhone", value: correction.phone, source: "user_correction" })
+      changed = true
+    }
+    if (
+      correction.reason &&
+      correction.reason !== existingDraft.reason &&
+      isSlotAnswerFor(message.content, "reason", existingDraft)
+    ) {
+      corrected.reason = correction.reason
+      corrected.history.push({ field: "reason", value: correction.reason, source: "user_correction" })
+      changed = true
+    }
+    if (
+      correction.preferredDate &&
+      correction.preferredDate !== existingDraft.preferredDate &&
+      isSlotAnswerFor(message.content, "date", existingDraft)
+    ) {
+      corrected.preferredDate = correction.preferredDate
+      corrected.history.push({ field: "preferredDate", value: correction.preferredDate, source: "user_correction" })
+      changed = true
+    }
+    if (
+      correction.preferredTime &&
+      correction.preferredTime !== existingDraft.preferredTime &&
+      isSlotAnswerFor(message.content, "time", existingDraft)
+    ) {
+      corrected.preferredTime = correction.preferredTime
+      corrected.history.push({ field: "preferredTime", value: correction.preferredTime, source: "user_correction" })
+      changed = true
+    }
+    if (changed) {
+      corrected.expectedField = nextMissingField(corrected)
+      corrected.status = corrected.expectedField ? "collecting" : "ready"
+      corrected.updatedAt = new Date().toISOString()
+      await prisma.conversation.update({
+        where: { id: context.conversation.id },
+        data: {
+          metadata: updateContextState(
+            writeDraftToMetadata(context.conversation.metadata, corrected),
+            { currentTopic: "appointment", lastUserIntent: "correcting_booking" },
+          ),
+          intent: "appointment",
+          status: "active",
+          summary: message.content.slice(0, 200),
+        },
+      })
+      logger.info("[APPOINTMENT] APPOINTMENT_DRAFT_UPDATED (correction while ready)", {
+        conversationId: context.conversation.id,
+        clinicId: context.clinicId,
+      })
+      const followUp = corrected.expectedField
+        ? buildPrompt(corrected, corrected.expectedField)
+        : buildConfirmationSummary(corrected)
+      return {
+        response: `Updated. ${followUp}`,
+        intent: "appointment",
+        confidence: 0.9,
+        requiresClinic: false,
+        responseSource: "APPOINTMENT",
+      }
+    }
+
+    // Genuine side question while awaiting confirmation → fall through to
+    // the normal flow (draft preserved as an interruption). Anything else
+    // gets the confirmation summary again — deterministically, no LLM.
+    if (/[?]/.test(message.content) || /^(what|where|when|how|do|does|is|are|can|could|tell)\b/i.test(message.content.trim())) {
+      // Fall through to classifyRoute below.
+    } else {
+      return {
+        response: buildConfirmationSummary(existingDraft),
+        intent: "appointment",
+        confidence: 0.9,
+        requiresClinic: false,
+        responseSource: "APPOINTMENT",
+      }
+    }
+  }
+
+  // ========================================================================
   // LEVEL 2: APPOINTMENT_START
   //   The user has EXPLICITLY asked to book. Activate a fresh draft.
   // ========================================================================
   if (decision.route === "APPOINTMENT_START") {
     const draft = createFreshDraft()
+    // Auto-fill phone from the WhatsApp sender BEFORE persisting so the
+    // stored draft already carries it (previously it was only set on the
+    // in-memory copy and lost on the next turn).
+    const autoPhone = message.from.phone
+    if (autoPhone && !draft.patientPhone) {
+      draft.patientPhone = autoPhone
+      draft.history.push({ field: "patientPhone", value: autoPhone, source: "whatsapp" })
+    }
     await prisma.conversation.update({
       where: { id: context.conversation.id },
       data: {
@@ -205,12 +511,11 @@ export async function runAiReceptionist(
         summary: message.content.slice(0, 200),
       },
     })
-    // Auto-fill phone from the WhatsApp sender if available.
-    const autoPhone = message.from.phone
-    if (autoPhone && !draft.patientPhone) {
-      draft.patientPhone = autoPhone
-      draft.history.push({ field: "patientPhone", value: autoPhone, source: "whatsapp" })
-    }
+    logger.info("[APPOINTMENT] APPOINTMENT_DRAFT_UPDATED (activated)", {
+      conversationId: context.conversation.id,
+      clinicId: context.clinicId,
+      phoneAutoFilled: Boolean(autoPhone),
+    })
     // The first prompt is always the name.
     return {
       response: "Sure, I can help you book an appointment. What's your full name?",
@@ -247,32 +552,36 @@ export async function runAiReceptionist(
     })
 
     if (turn.isComplete && isDraftReady(turn.draft)) {
-      // All required fields collected. Hand off to the AI to do
-      // the actual booking.
-      const aiResult = await bookAppointmentViaAi(context, turn.draft, conversationHistory)
-      // Booking attempted — clear the draft so the next message
-      // is treated as a fresh conversation, not a continuation of
-      // the appointment flow.
-      const clearedDraft = clearDraft("completed")
+      // All required fields collected. Do NOT book yet — persist the
+      // READY draft and ask for explicit confirmation. Booking happens
+      // deterministically (no LLM) in the LEVEL 1.8 confirmation branch.
+      // Previously this handed off to the AI, which emitted raw JSON and
+      // fake confirmations without ever creating a database record.
+      logger.info("[APPOINTMENT] APPOINTMENT_READY_FOR_CONFIRMATION", {
+        conversationId: context.conversation.id,
+        clinicId: context.clinicId,
+        preferredDate: turn.draft.preferredDate,
+        preferredTime: turn.draft.preferredTime,
+      })
       await prisma.conversation.update({
         where: { id: context.conversation.id },
         data: {
           metadata: updateContextState(
-            writeDraftToMetadata(context.conversation.metadata, clearedDraft),
-            { currentTopic: "appointment", lastUserIntent: "booking_confirmed" },
+            writeDraftToMetadata(context.conversation.metadata, turn.draft),
+            { currentTopic: "appointment", lastUserIntent: "awaiting_confirmation" },
           ),
           intent: "appointment",
           isEmergency: false,
-          status: aiResult.requiresClinic ? "waiting_clinic" : "active",
+          status: "active",
           summary: message.content.slice(0, 200),
         },
       })
       return {
-        response: aiResult.response,
+        response: buildConfirmationSummary(turn.draft),
         intent: "appointment",
         confidence: 0.95,
-        requiresClinic: aiResult.requiresClinic,
-        responseSource: "AI",
+        requiresClinic: false,
+        responseSource: "APPOINTMENT",
       }
     }
 
@@ -439,50 +748,6 @@ export async function runAiReceptionist(
     confidence: 0.7,
     requiresClinic: false,
     responseSource: hadAiResponse ? "AI" : "FALLBACK",
-  }
-}
-
-/**
- * All required fields are present. Call the AI with a tightly-scoped
- * prompt that drives the book_appointment tool call. The AI picks a
- * providerId via get_next_available_slots, then books. The
- * deterministic part of the booking (patientName, patientPhone,
- * reason, preferredDate, preferredTime) is injected by us so the AI
- * cannot hallucinate any of them.
- */
-async function bookAppointmentViaAi(
-  context: Omit<PipelineContext, "aiResponse" | "intent" | "confidence" | "requiresClinic">,
-  draft: AppointmentDraft,
-  conversationHistory: ChatMessage[],
-): Promise<{ response: string; requiresClinic: boolean }> {
-  const userMessage = [
-    `The patient has confirmed the following booking details. Please call book_appointment now with these exact values; do NOT ask any more questions.`,
-    ``,
-    `Name: ${draft.patientName}`,
-    `Phone: ${draft.patientPhone}`,
-    `Reason: ${draft.reason}`,
-    `Preferred date: ${draft.preferredDate}`,
-    `Preferred time: ${draft.preferredTime}`,
-    ``,
-    `If the requested time is unavailable, use get_next_available_slots to pick the closest alternative, then call book_appointment with that slot. Confirm the appointment details to the patient in your reply.`,
-  ].join("\n")
-
-  const aiResult = await generateAIResponseWithTools(
-    userMessage,
-    context.clinicId,
-    conversationHistory,
-  )
-
-  if (aiResult.response && aiResult.response.trim()) {
-    return { response: aiResult.response, requiresClinic: false }
-  }
-
-  return {
-    response:
-      `Thanks${draft.patientName ? `, ${draft.patientName.split(/\s+/)[0]}` : ""}! ` +
-      `I've sent your appointment request to our team. ` +
-      `We'll confirm ${draft.preferredDate} at ${draft.preferredTime} for ${draft.reason} shortly.`,
-    requiresClinic: true,
   }
 }
 

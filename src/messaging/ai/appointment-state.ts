@@ -284,7 +284,7 @@ export function nextMissingField(draft: AppointmentDraft): ExpectedField {
   return null
 }
 
-function buildPrompt(draft: AppointmentDraft, field: ExpectedField): string {
+export function buildPrompt(draft: AppointmentDraft, field: ExpectedField): string {
   if (field === null) return ""
   const firstName = draft.patientName?.split(/\s+/)[0]
   switch (field) {
@@ -397,6 +397,37 @@ export function extractTime(line: string): string | undefined {
   if (/^morning$/.test(lower)) return "09:00"
   if (/^afternoon$/.test(lower)) return "14:00"
   if (/^evening$/.test(lower)) return "17:30"
+  if (/\bnoon\b/.test(lower)) return "12:00"
+  if (/\bmidnight\b/.test(lower)) return "00:00"
+
+  // "half past four", "quarter past 4", "quarter to 5" — digits or words.
+  // No meridiem is assumed (consistent with bare-hour handling).
+  const hourToken = "(\\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
+  const wordHour = (t: string): number | undefined => {
+    if (/^\d{1,2}$/.test(t)) {
+      const h = parseInt(t, 10)
+      return h >= 1 && h <= 12 ? h : undefined
+    }
+    return NUMBER_WORDS[t]
+  }
+  const halfPast = lower.match(new RegExp(`\\bhalf\\s+past\\s+${hourToken}\\b`))
+  if (halfPast) {
+    const h = wordHour(halfPast[1])
+    if (h !== undefined) return `${String(h === 12 ? 12 : h).padStart(2, "0")}:30`
+  }
+  const quarterPast = lower.match(new RegExp(`\\bquarter\\s+past\\s+${hourToken}\\b`))
+  if (quarterPast) {
+    const h = wordHour(quarterPast[1])
+    if (h !== undefined) return `${String(h === 12 ? 12 : h).padStart(2, "0")}:15`
+  }
+  const quarterTo = lower.match(new RegExp(`\\bquarter\\s+to\\s+${hourToken}\\b`))
+  if (quarterTo) {
+    const h = wordHour(quarterTo[1])
+    if (h !== undefined) {
+      const prev = h === 1 ? 12 : h - 1
+      return `${String(prev).padStart(2, "0")}:45`
+    }
+  }
 
   const m = lower.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\b/)
   if (m) {
@@ -418,6 +449,11 @@ export function extractTime(line: string): string | undefined {
   return undefined
 }
 
+const NUMBER_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
+  seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+}
+
 const MONTHS: Record<string, number> = {
   jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3,
   apr: 4, april: 4, may: 5, jun: 6, june: 6, jul: 7, july: 7,
@@ -426,6 +462,21 @@ const MONTHS: Record<string, number> = {
 }
 const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
 
+/**
+ * Parse a natural-language date into YYYY-MM-DD.
+ *
+ * Year resolution (dynamic — NEVER hardcoded):
+ *   - explicit 4-digit year in the message → that year wins;
+ *   - no year → the server's current year, EXCEPT when that date has
+ *     already passed (relative to server `now`), in which case the
+ *     NEXT year is used (a past appointment is never bookable).
+ *   - invalid calendar dates (e.g. 30 February) → undefined.
+ *
+ * Supported: today/tomorrow/day after tomorrow, weekday names
+ * ("next Monday", "this Saturday"), "12 September", "September 12",
+ * ordinals ("12th September", "September 12th"), "12 Sep",
+ * numeric (M/D, D-M with year), explicit years ("12 September 2026").
+ */
 export function extractDate(line: string, now: Date): string | undefined {
   const lower = line.toLowerCase().trim()
   if (/\btoday\b/.test(lower)) return isoDate(now)
@@ -439,31 +490,55 @@ export function extractDate(line: string, now: Date): string | undefined {
     if (idx >= 0) return isoDate(nextWeekday(now, idx, wantNext))
   }
 
-  const monthDay = lower.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:[,\s]+(\d{4}))?\b/)
+  const monthDay = lower.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:[,\s]+(\d{4}))?\b/)
   if (monthDay) {
     const month = MONTHS[monthDay[1].slice(0, 3)]
     const day = parseInt(monthDay[2], 10)
-    const year = monthDay[3] ? parseInt(monthDay[3], 10) : now.getFullYear()
-    return isoDate(new Date(year, (month || 1) - 1, day))
+    return buildCalendarDate(now, month || 0, day, monthDay[3] ? parseInt(monthDay[3], 10) : undefined)
   }
 
-  const dayMonth = lower.match(/\b(\d{1,2})\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[,\s]+(\d{4}))?\b/)
+  const dayMonth = lower.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[,\s]+(\d{4}))?\b/)
   if (dayMonth) {
     const day = parseInt(dayMonth[1], 10)
     const month = MONTHS[dayMonth[2].slice(0, 3)]
-    const year = dayMonth[3] ? parseInt(dayMonth[3], 10) : now.getFullYear()
-    return isoDate(new Date(year, (month || 1) - 1, day))
+    return buildCalendarDate(now, month || 0, day, dayMonth[3] ? parseInt(dayMonth[3], 10) : undefined)
   }
 
   const numeric = lower.match(/\b(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\b/)
   if (numeric) {
     const a = parseInt(numeric[1], 10)
     const b = parseInt(numeric[2], 10)
-    const year = numeric[3] ? parseInt(numeric[3], 10) : now.getFullYear()
-    if (a >= 1 && a <= 12 && b >= 1 && b <= 31) return isoDate(new Date(year, a - 1, b))
+    let year = numeric[3] ? parseInt(numeric[3], 10) : undefined
+    if (year !== undefined && year < 100) year += 2000
+    if (a >= 1 && a <= 12 && b >= 1 && b <= 31) return buildCalendarDate(now, a, b, year)
   }
 
   return undefined
+}
+
+/**
+ * Construct a validated YYYY-MM-DD for month/day in the appropriate year.
+ * Returns undefined for impossible dates (month 0, day out of range,
+ * e.g. 30 February — detected via round-trip, since `new Date` rolls over).
+ */
+function buildCalendarDate(now: Date, month: number, day: number, year: number | undefined): string | undefined {
+  if (!month || month < 1 || month > 12 || day < 1 || day > 31) return undefined
+  const explicitYear = year !== undefined
+  let y = explicitYear ? year! : now.getFullYear()
+  let built = new Date(y, month - 1, day)
+  if (built.getMonth() !== month - 1 || built.getDate() !== day) return undefined
+  if (!explicitYear) {
+    // A yearless date that already passed this year belongs to next year
+    // (appointments are always in the future). Explicit years are NEVER
+    // shifted — the user said what they said.
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    if (built < todayStart) {
+      y += 1
+      built = new Date(y, month - 1, day)
+      if (built.getMonth() !== month - 1 || built.getDate() !== day) return undefined
+    }
+  }
+  return isoDate(built)
 }
 
 export function extractName(line: string): string | undefined {
@@ -539,6 +614,105 @@ function nextWeekday(now: Date, target: number, wantNext: boolean): Date {
   if (diff === 0) diff = 7
   if (wantNext && diff < 7) diff += 7
   return addDays(now, diff)
+}
+
+// === Confirmation / denial ================================================
+// Explicit user confirmation while a READY draft awaits it. Checked BEFORE
+// the route classifier so "yes confirm" books instead of falling through
+// to the generic AI flow.
+
+const CONFIRM_PATTERNS: RegExp[] = [
+  /^(yes|yeah|yep|yup|sure|ok|okay|okay\s+confirm|confirm|confirmed|yes\s+confirm|confirm\s+(it|this|that|appointment|my\s+appointment)|book\s+it|book\s+this|book\s+my\s+appointment|please\s+confirm|please\s+book|go\s+ahead|do\s+it|looks\s+good|that'?s\s+(correct|right|good|fine)|correct|right)\b[.!?]*$/i,
+  /\b(yes[,\s]+confirm|confirm\s+my\s+appointment|yes[,\s]+book\s+it|yes[,\s]+please)\b/i,
+]
+
+export function isConfirmationMessage(message: string): boolean {
+  const text = message.trim()
+  if (!text || text.length > 120) return false
+  return CONFIRM_PATTERNS.some((re) => re.test(text))
+}
+
+const DENY_PATTERNS: RegExp[] = [
+  /^(no|nope|nah|not\s+yet|don'?t(\s+book|\s+confirm)?|stop|cancel\s+(it|this|that)|never\s*mind|forget\s+it|nvm)\b[.!]*$/i,
+]
+
+export function isDenialMessage(message: string): boolean {
+  const text = message.trim()
+  if (!text || text.length > 60) return false
+  return DENY_PATTERNS.some((re) => re.test(text))
+}
+
+// === Year correction ======================================================
+// "not 2027, 2026" / "it's 2026" / "year is 2026" / bare "2026" while a
+// draft holds a date: deterministically rewrite the draft year instead of
+// routing to the generic AI flow.
+
+export function extractYearCorrection(message: string): number | undefined {
+  const lower = message.toLowerCase()
+  const years = (lower.match(/\b(?:19|20)\d{2}\b/g) || []).map((y) => parseInt(y, 10))
+  if (years.length === 0) return undefined
+  const hasCorrectionCue =
+    /\b(not|isn'?t|it'?s|actually|correction|wrong|year|change)\b/i.test(lower) ||
+    /\bnot\s+\d{4}\b/.test(lower) ||
+    years.length === 1
+  if (!hasCorrectionCue) return undefined
+  // "not 2027, 2026" → the LAST mentioned year is the correction target.
+  return years[years.length - 1]
+}
+
+export function applyYearToDate(dateIso: string, year: number): string | undefined {
+  const m = dateIso.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return undefined
+  const built = new Date(year, parseInt(m[2], 10) - 1, parseInt(m[3], 10))
+  if (built.getMonth() !== parseInt(m[2], 10) - 1 || built.getDate() !== parseInt(m[3], 10)) return undefined
+  return isoDate(built)
+}
+
+// === Human-readable formatting (no hardcoding — pure functions) ============
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+]
+
+export function formatDateHuman(dateIso: string): string {
+  const m = dateIso.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return dateIso
+  const monthName = MONTH_NAMES[parseInt(m[2], 10) - 1] || m[2]
+  return `${parseInt(m[3], 10)} ${monthName} ${m[1]}`
+}
+
+export function formatTimeHuman(time24: string): string {
+  const m = time24.match(/^(\d{1,2}):(\d{2})$/)
+  if (!m) return time24
+  let h = parseInt(m[1], 10)
+  const suffix = h >= 12 ? "PM" : "AM"
+  h = h % 12
+  if (h === 0) h = 12
+  return `${h}:${m[2]} ${suffix}`
+}
+
+export function buildConfirmationSummary(draft: AppointmentDraft): string {
+  const lines = [
+    "Perfect. I have:",
+    `Date: ${draft.preferredDate ? formatDateHuman(draft.preferredDate) : "—"}`,
+    `Time: ${draft.preferredTime ? formatTimeHuman(draft.preferredTime) : "—"}`,
+  ]
+  if (draft.patientName) lines.push(`Name: ${draft.patientName}`)
+  if (draft.reason) lines.push(`Reason: ${draft.reason}`)
+  lines.push("", "Shall I confirm this appointment?")
+  return lines.join("\n")
+}
+
+export function buildBookingConfirmation(draft: AppointmentDraft): string {
+  const firstName = draft.patientName?.split(/\s+/)[0]
+  return (
+    `Your appointment has been confirmed for ` +
+    `${draft.preferredDate ? formatDateHuman(draft.preferredDate) : "your requested date"}` +
+    `${draft.preferredTime ? ` at ${formatTimeHuman(draft.preferredTime)}` : ""}` +
+    `${draft.reason ? ` for ${draft.reason}` : ""}.` +
+    `${firstName ? ` We'll see you then, ${firstName}!` : " We'll see you then!"}`
+  )
 }
 
 // === Persistence helpers ==================================================

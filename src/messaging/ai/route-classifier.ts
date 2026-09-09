@@ -468,6 +468,7 @@ function hasTimeIntent(text: string): boolean {
   return (
     /\b\d{1,2}(:\d{2})?\s*(am|pm|a\.m\.|p\.m\.)\b/i.test(lower) ||
     /\b([01]?\d|2[0-3]):[0-5]\d\b/.test(lower) ||
+    /\b(half\s+past|quarter\s+(past|to))\s+\d{1,2}\b/.test(lower) ||
     /\b(morning|afternoon|evening|noon|midnight)\b/.test(lower)
   )
 }

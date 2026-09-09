@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/db"
 import { getClinicId, apiError, handleApiError } from "@/lib/api"
 import { reserveSlot } from "@/lib/appointment/availability"
+import { toDashboardAppointment } from "@/lib/appointment/present"
 
 export async function GET(request: Request) {
   try {
@@ -11,7 +12,10 @@ export async function GET(request: Request) {
       orderBy: { createdAt: "desc" },
       take: 50,
     })
-    return NextResponse.json(appointments)
+    // The dashboard reads `date` / `time` / `patientPhone` while the
+    // schema stores `preferredDate` / `preferredTime` / `phone`
+    // (production incident: blank details). The mapper returns both.
+    return NextResponse.json(appointments.map(toDashboardAppointment))
   } catch (error) {
     return handleApiError(error, "Failed to fetch appointments")
   }

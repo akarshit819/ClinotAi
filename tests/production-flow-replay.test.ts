@@ -328,23 +328,20 @@ describe("Appointment state machine handles booking deterministically", () => {
     expect(outbound).toContain("cancelled")
   })
 
-  it("booking completes through the AI tool path when date+time provided", async () => {
+  it("completed draft asks for confirmation WITHOUT any AI call (no LLM in booking loop)", async () => {
     await turn("I want to book appointment", 1)
     await turn("Akarshit\n870087940\nPain", 2)
     const before = openrouterState.calls.length
     const { outbound } = await turn("tomorrow at 4 PM", 3)
-    // Draft completes → AI is invoked to call book_appointment.
-    expect(aiCallsDuringTurn(before)).toBe(1)
-    // The AI tool-path request includes the collected booking fields.
-    const req = openrouterState.calls[openrouterState.calls.length - 1]
-    expect(req.body.tools).toBeTruthy() // booking handoff includes tools
-    const lastUser = [...req.body.messages].reverse().find((m) => m.role === "user")
-    const content = typeof lastUser?.content === "string" ? lastUser.content : ""
-    expect(content).toContain("Name: Akarshit")
-    expect(content).toContain("Phone: 870087940")
-    expect(content).toContain("Reason: Pain")
-    // Outbound is whatever the AI produced (echo), not a fallback.
-    expect(outbound).toContain("AI_REPLY:")
+    // Draft completes → NO AI call. The deterministic confirmation
+    // summary is sent instead (previously the AI was handed the booking
+    // and leaked raw JSON without creating a record).
+    expect(aiCallsDuringTurn(before)).toBe(0)
+    expect(outbound).toContain("Shall I confirm this appointment?")
+    expect(outbound).toContain("4:00 PM")
+    expect(outbound).toContain("Akarshit")
+    expect(outbound).not.toContain("{")
+    expect(outbound).not.toContain("phone set")
   })
 })
 
