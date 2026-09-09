@@ -337,7 +337,7 @@ describe("Appointment state machine handles booking deterministically", () => {
     // summary is sent instead (previously the AI was handed the booking
     // and leaked raw JSON without creating a record).
     expect(aiCallsDuringTurn(before)).toBe(0)
-    expect(outbound).toContain("Shall I confirm this appointment?")
+    expect(outbound).toContain("Would you like me to confirm this appointment?")
     expect(outbound).toContain("4:00 PM")
     expect(outbound).toContain("Akarshit")
     expect(outbound).not.toContain("{")

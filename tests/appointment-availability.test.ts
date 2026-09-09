@@ -209,6 +209,34 @@ describe("Bug 1: booking honors real availability", () => {
     expect(free.duplicate).toBe(false)
   })
 
+  it("TEST 7: availability query error → ERROR, never slot_taken", async () => {
+    const { prisma } = await import("../src/lib/db")
+    const { bookAppointmentFromDraft } = await import("../src/lib/appointment/booking")
+    ;(prisma.appointment.findFirst as any).mockResolvedValue(null)
+    ;(prisma.appointment.findMany as any).mockRejectedValue(new Error("column Appointment.endTime does not exist"))
+    ;(prisma.appointment.findUnique as any).mockResolvedValue({ id: "appt-1" })
+    const result = await bookAppointmentFromDraft({
+      clinicId: "clinic-1",
+      draft: {
+        active: true,
+        status: "ready" as const,
+        expectedField: null,
+        patientName: "Akarshit",
+        patientPhone: "8700879404",
+        reason: "Headache",
+        preferredDate: BOOKED_DATE,
+        preferredTime: "16:00",
+        history: [],
+      },
+      whatsappPhone: "8700879404",
+    })
+    // Infrastructure failure must surface as ERROR (draft kept, honest
+    // message) — never as a false "slot taken".
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.reason).toBe("error")
+  })
+
   it("genuine conflict never reports 'unverifiable' and vice versa", async () => {
     const { prisma } = await import("../src/lib/db")
     const { bookAppointmentFromDraft } = await import("../src/lib/appointment/booking")

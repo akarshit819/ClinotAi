@@ -39,6 +39,10 @@ const CRITICAL_TABLES = [
   "Clinic",
   "User",
   "Integration",
+  "Appointment",
+  "Conversation",
+  "ConversationMessage",
+  "Patient",
 ]
 
 describeMaybe("Production migration contract (real PostgreSQL)", () => {
@@ -107,6 +111,19 @@ describeMaybe("Production migration contract (real PostgreSQL)", () => {
         `SELECT column_name FROM information_schema.columns WHERE table_name = 'Job' AND table_schema = 'public' ORDER BY ordinal_position`,
       )
       expect(jobColumns.rows.length).toBeGreaterThanOrEqual(16)
+
+      // Production incident: Appointment.endTime existed in schema.prisma
+      // but in no migration, so every appointment query failed in
+      // production. The 20260909000000 migration must provide it.
+      const apptColumns = await client.query(
+        `SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name = 'Appointment' AND table_schema = 'public'`,
+      )
+      const apptColNames = new Set(apptColumns.rows.map((r) => r.column_name))
+      for (const col of ["id", "patientName", "phone", "reason", "preferredDate", "preferredTime", "endTime", "doctor", "status", "patientId", "clinicId"]) {
+        expect(apptColNames.has(col), `Appointment.${col} must exist after migrate deploy`).toBe(true)
+      }
+      const endTimeRow = apptColumns.rows.find((r) => r.column_name === "endTime")
+      expect(endTimeRow.is_nullable).toBe("YES")
     } finally {
       await client.end()
     }

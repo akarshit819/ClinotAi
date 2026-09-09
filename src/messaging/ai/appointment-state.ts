@@ -216,14 +216,19 @@ export function processSlotAnswer(
       draft.history.push({ field: "reason", value: extracted.reason, source: "user" })
     }
   }
+  // Date/time: an EXPLICITLY present value ALWAYS replaces a stale one,
+  // regardless of which field was expected (production incident: the user
+  // said "12 september 2026 at 4pm" and the system kept 2026-10-05/12:00).
+  // Date/time extractors only fire on unambiguous markers, so an explicit
+  // hit is never accidental.
   if (extracted.preferredDate) {
-    if (!draft.preferredDate || draft.expectedField === "date") {
+    if (draft.preferredDate !== extracted.preferredDate) {
       draft.preferredDate = extracted.preferredDate
       draft.history.push({ field: "preferredDate", value: extracted.preferredDate, source: "user" })
     }
   }
   if (extracted.preferredTime) {
-    if (!draft.preferredTime || draft.expectedField === "time") {
+    if (draft.preferredTime !== extracted.preferredTime) {
       draft.preferredTime = extracted.preferredTime
       draft.history.push({ field: "preferredTime", value: extracted.preferredTime, source: "user" })
     }
@@ -429,16 +434,26 @@ export function extractTime(line: string): string | undefined {
     }
   }
 
-  const m = lower.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\b/)
+  // Word-number meridiem: "four pm" → 16:00.
+  const wordMeridiem = lower.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(am|pm|a\.m\.|p\.m\.)\b/)
+  if (wordMeridiem) {
+    let h = NUMBER_WORDS[wordMeridiem[1]]
+    const isPm = /p/.test(wordMeridiem[2])
+    if (isPm && h < 12) h += 12
+    if (!isPm && h === 12) h = 0
+    return `${String(h).padStart(2, "0")}:00`
+  }
+
+  // Explicit meridiem forms: "4pm", "4 PM", "4:30pm", "12am".
+  // NOTE: a BARE 1-2 digit number is deliberately NOT a time — it is far
+  // more likely a day-of-month ("12 September" must never become 12:00).
+  const m = lower.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b/)
   if (m) {
     let h = parseInt(m[1], 10)
     const min = m[2] ? parseInt(m[2], 10) : 0
-    const meridiem = m[3]
-    if (meridiem) {
-      const isPm = /p/.test(meridiem)
-      if (isPm && h < 12) h += 12
-      if (!isPm && h === 12) h = 0
-    }
+    const isPm = /p/.test(m[3])
+    if (isPm && h < 12) h += 12
+    if (!isPm && h === 12) h = 0
     if (h < 0 || h > 23 || min < 0 || min > 59) return undefined
     return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`
   }
@@ -674,6 +689,26 @@ export function isListTimesMessage(message: string): boolean {
   return LIST_TIMES_PATTERNS.some((re) => re.test(text))
 }
 
+// === Booking-status questions =============================================
+// "confirm or not?" / "is it confirmed?" / "did you confirm?" / "has it
+// been booked?" — these ask ABOUT state and must NEVER trigger booking.
+// They are answered deterministically from the draft / database.
+
+const STATUS_QUESTION_PATTERNS: RegExp[] = [
+  /\bconfirm\s+or\s+not\b/i,
+  /\bis\s+it\s+confirmed\b/i,
+  /\b(did\s+you|have\s+you)\s+(confirm|book)(ed|ing)?\b/i,
+  /\bhas\s+it\s+been\s+(confirmed|booked)\b/i,
+  /\bis\s+my\s+appointment\s+(confirmed|booked)\b/i,
+  /\bam\s+i\s+(confirmed|booked)\b/i,
+]
+
+export function isBookingStatusQuestion(message: string): boolean {
+  const text = message.trim()
+  if (!text || text.length > 140) return false
+  return STATUS_QUESTION_PATTERNS.some((re) => re.test(text))
+}
+
 // === Year correction ======================================================
 // "not 2027, 2026" / "it's 2026" / "year is 2026" / bare "2026" while a
 // draft holds a date: deterministically rewrite the draft year instead of
@@ -714,6 +749,18 @@ export function formatDateHuman(dateIso: string): string {
   return `${parseInt(m[3], 10)} ${monthName} ${m[1]}`
 }
 
+const WEEKDAY_NAMES = [
+  "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+]
+
+export function formatDateHumanLong(dateIso: string): string {
+  const m = dateIso.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return dateIso
+  const built = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10))
+  const weekday = WEEKDAY_NAMES[built.getDay()] || ""
+  return `${weekday}, ${parseInt(m[3], 10)} ${MONTH_NAMES[parseInt(m[2], 10) - 1] || m[2]} ${m[1]}`
+}
+
 export function formatTimeHuman(time24: string): string {
   const m = time24.match(/^(\d{1,2}):(\d{2})$/)
   if (!m) return time24
@@ -727,12 +774,14 @@ export function formatTimeHuman(time24: string): string {
 export function buildConfirmationSummary(draft: AppointmentDraft): string {
   const lines = [
     "Perfect. I have:",
-    `Date: ${draft.preferredDate ? formatDateHuman(draft.preferredDate) : "—"}`,
+    "",
+    `Date: ${draft.preferredDate ? formatDateHumanLong(draft.preferredDate) : "—"}`,
     `Time: ${draft.preferredTime ? formatTimeHuman(draft.preferredTime) : "—"}`,
   ]
   if (draft.patientName) lines.push(`Name: ${draft.patientName}`)
+  if (draft.patientPhone) lines.push(`Phone: ${draft.patientPhone}`)
   if (draft.reason) lines.push(`Reason: ${draft.reason}`)
-  lines.push("", "Shall I confirm this appointment?")
+  lines.push("", "Would you like me to confirm this appointment?")
   return lines.join("\n")
 }
 

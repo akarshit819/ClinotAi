@@ -452,6 +452,137 @@ describe(
 )
 
 // ---------------------------------------------------------------------------
+// Stale-draft overwrite + status questions (mission TEST 1/5/6, Bug 2/3/8)
+// ---------------------------------------------------------------------------
+
+describe("explicit input replaces stale draft values (no AI calls)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  function staleDraftCtx() {
+    return receptionistContext(
+      draftMetadata({
+        active: true,
+        status: "collecting",
+        expectedField: "date",
+        patientName: "Akarshit",
+        patientPhone: "15559876543",
+        reason: "Headache",
+        preferredDate: "2026-10-05",
+        preferredTime: "12:00",
+        history: [],
+      }),
+    )
+  }
+
+  it("TEST 1: '12 september 2026 at 4pm' replaces 2026-10-05/12:00", async () => {
+    const { prisma } = await import("../src/lib/db")
+    const { runAiReceptionist } = await import("../src/messaging/ai/receptionist")
+    const ctx = staleDraftCtx()
+    ctx.message.content = "12 september 2026 at 4pm"
+
+    const result = await runAiReceptionist(ctx, ctx.message, [])
+
+    // Ready now → confirmation summary with the NEW values.
+    expect(result.response).toContain("12 September 2026")
+    expect(result.response).toContain("4:00 PM")
+    expect(result.response).not.toContain("October")
+    expect(result.responseSource).toBe("APPOINTMENT")
+    const updateCalls = (prisma.conversation.update as any).mock.calls
+    const saved = JSON.parse(updateCalls[updateCalls.length - 1][0].data.metadata).appointmentDraft
+    expect(saved.preferredDate).toBe("2026-09-12")
+    expect(saved.preferredTime).toBe("16:00")
+  })
+
+  it("TEST 5/6: status questions never book — truthful 'not yet' while ready", async () => {
+    const { prisma } = await import("../src/lib/db")
+    const { runAiReceptionist } = await import("../src/messaging/ai/receptionist")
+    for (const q of ["confirm or not?", "is it confirmed?", "did you confirm?", "has it been booked?"]) {
+      vi.clearAllMocks()
+      const ctx = receptionistContext(draftMetadata({ ...readyDraft(), history: [] }))
+      ctx.message.content = q
+      const result = await runAiReceptionist(ctx, ctx.message, [])
+      expect(result.response).toMatch(/not yet/i)
+      expect(result.responseSource).toBe("APPOINTMENT")
+      // No booking attempted: no appointment writes.
+      expect((prisma.appointment.findFirst as any).mock.calls.length).toBe(0)
+    }
+  })
+
+  it("status question with a real booking answers 'successfully confirmed'", async () => {
+    const { prisma } = await import("../src/lib/db")
+    const { runAiReceptionist } = await import("../src/messaging/ai/receptionist")
+    ;(prisma.appointment.findFirst as any).mockResolvedValue({
+      preferredDate: "2026-09-12",
+      preferredTime: "16:00",
+      patientName: "Akarshit",
+      status: "confirmed",
+    })
+    const ctx = receptionistContext(null)
+    ctx.message.content = "is it confirmed?"
+    const result = await runAiReceptionist(ctx, ctx.message, [])
+    expect(result.response).toMatch(/successfully confirmed/)
+    expect(result.response).toContain("12 September 2026")
+    expect(result.responseSource).toBe("APPOINTMENT")
+  })
+
+  it("status question with no booking offers to book", async () => {
+    const { prisma } = await import("../src/lib/db")
+    const { runAiReceptionist } = await import("../src/messaging/ai/receptionist")
+    // A previous test left a permanent findFirst implementation behind
+    // (clearAllMocks does not remove implementations) — reset explicitly.
+    ;(prisma.appointment.findFirst as any).mockResolvedValue(null)
+    const ctx = receptionistContext(null)
+    ctx.message.content = "has it been booked?"
+    const result = await runAiReceptionist(ctx, ctx.message, [])
+    expect(result.response).toMatch(/don't have a confirmed appointment/)
+    expect(result.responseSource).toBe("APPOINTMENT")
+  })
+
+  it("TEST 11: explicit date updates even on the interruption route", async () => {
+    const { prisma } = await import("../src/lib/db")
+    const { runAiReceptionist } = await import("../src/messaging/ai/receptionist")
+    const ctx = receptionistContext(
+      draftMetadata({
+        active: true,
+        status: "collecting",
+        expectedField: "reason",
+        patientName: "Akarshit",
+        patientPhone: "15559876543",
+        history: [],
+      }),
+    )
+    ctx.message.content = "where are you located, by the way 12 september 2026"
+
+    await runAiReceptionist(ctx, ctx.message, [])
+    const updateCalls = (prisma.conversation.update as any).mock.calls
+    // At least one metadata write must carry the explicitly supplied date.
+    const metadatas = updateCalls
+      .map((c: any) => c[0].data.metadata as string | undefined)
+      .filter(Boolean) as string[]
+    const withDraft = metadatas
+      .map((m) => {
+        try {
+          return JSON.parse(m).appointmentDraft
+        } catch {
+          return null
+        }
+      })
+      .filter(Boolean)
+    expect(withDraft.length).toBeGreaterThan(0)
+    expect(withDraft[withDraft.length - 1].preferredDate).toBe("2026-09-12")
+  })
+
+  it("TEST 12: minimal AI booking JSON is blocked", async () => {
+    const { sanitizeOutboundText } = await import("../src/messaging/sanitize")
+    const r = sanitizeOutboundText('{"appointment":{"date":"2026-09-12"}}', {})
+    expect(r.blocked).toBe(true)
+    expect(r.text).not.toContain("{")
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Receptionist-level: activation → correction → confirmation (no AI calls)
 // ---------------------------------------------------------------------------
 

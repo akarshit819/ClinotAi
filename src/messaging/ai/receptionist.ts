@@ -44,11 +44,14 @@ import {
   isDenialMessage,
   isChooseForMeMessage,
   isListTimesMessage,
+  isBookingStatusQuestion,
   extractAllFields,
   extractDate,
+  extractTime,
   extractYearCorrection,
   applyYearToDate,
   formatDateHuman,
+  formatDateHumanLong,
   formatTimeHuman,
   buildPrompt,
   buildConfirmationSummary,
@@ -374,6 +377,10 @@ export async function runAiReceptionist(
   // LEVEL 1.8: READY-DRAFT CONFIRMATION (deterministic booking)
   //   All slots collected. The user must explicitly confirm before ANY
   //   database write happens. Booking itself runs with NO LLM involved.
+  //
+  //   State machine: COLLECTING_DETAILS → READY_FOR_CONFIRMATION →
+  //   BOOKING (synchronous, in-turn) → CONFIRMED | SLOT_UNAVAILABLE |
+  //   FAILED | CANCELLED. The draft is cleared ONLY on CONFIRMED.
   // ========================================================================
   if (existingDraft?.active && isDraftReady(existingDraft)) {
     logger.info("[APPOINTMENT] APPOINTMENT_READY_FOR_CONFIRMATION", {
@@ -382,6 +389,21 @@ export async function runAiReceptionist(
       preferredDate: existingDraft.preferredDate,
       preferredTime: existingDraft.preferredTime,
     })
+
+    // Status questions ("confirm or not?", "is it confirmed?") ask ABOUT
+    // state — they must NEVER trigger booking. The draft is ready but
+    // nothing is booked yet, so answer that truthfully and deterministically.
+    if (isBookingStatusQuestion(message.content)) {
+      return {
+        response:
+          "Not yet. Your appointment is ready, but I still need your " +
+          "confirmation to book it. Would you like me to confirm it?",
+        intent: "appointment",
+        confidence: 0.95,
+        requiresClinic: false,
+        responseSource: "APPOINTMENT",
+      }
+    }
 
     if (isConfirmationMessage(message.content)) {
       logger.info("[APPOINTMENT] APPOINTMENT_CONFIRMATION_REQUESTED", {
@@ -606,6 +628,61 @@ export async function runAiReceptionist(
   }
 
   // ========================================================================
+  // LEVEL 1.9: BOOKING-STATUS QUESTION WITHOUT AN ACTIVE DRAFT
+  //   "is it confirmed?" after a completed booking (draft already
+  //   cleared) or out of the blue. Answer truthfully from the DATABASE
+  //   — never from the model — by looking up the most recent active
+  //   appointment for this verified phone number.
+  // ========================================================================
+  if (!existingDraft?.active && isBookingStatusQuestion(message.content)) {
+    const phone = message.from.phone || ""
+    let latest: {
+      preferredDate: string | null
+      preferredTime: string | null
+      patientName: string
+      status: string
+    } | null = null
+    if (phone) {
+      try {
+        latest = await prisma.appointment.findFirst({
+          where: {
+            clinicId: context.clinicId,
+            phone,
+            status: { in: ["pending", "confirmed", "in_progress"] },
+          },
+          orderBy: { createdAt: "desc" },
+          select: { preferredDate: true, preferredTime: true, patientName: true, status: true },
+        })
+      } catch (e) {
+        logger.error("[APPOINTMENT] Status lookup failed", {
+          conversationId: context.conversation.id,
+          clinicId: context.clinicId,
+          error: e instanceof Error ? e.message : String(e),
+        })
+      }
+    }
+    if (latest?.preferredDate && latest?.preferredTime) {
+      return {
+        response:
+          `Yes. Your appointment has been successfully confirmed for ` +
+          `${formatDateHumanLong(latest.preferredDate)} at ${formatTimeHuman(latest.preferredTime)}.`,
+        intent: "appointment",
+        confidence: 0.9,
+        requiresClinic: false,
+        responseSource: "APPOINTMENT",
+      }
+    }
+    return {
+      response:
+        "You don't have a confirmed appointment yet. Would you like to book one?",
+      intent: "appointment",
+      confidence: 0.9,
+      requiresClinic: false,
+      responseSource: "APPOINTMENT",
+    }
+  }
+
+  // ========================================================================
   // LEVEL 2: APPOINTMENT_START
   //   The user has EXPLICITLY asked to book. Activate a fresh draft.
   // ========================================================================
@@ -755,15 +832,58 @@ export async function runAiReceptionist(
       interruptionRoute: decision.route,
       expectedField: existingDraft.expectedField,
     })
+    // Bug 8: an interruption route must NEVER block explicit date/time
+    // updates. "12 september 2026 at 4pm" replaces stale values even
+    // when the classifier did not see a slot answer. ONLY date/time are
+    // touched here — name/reason/phone stay exactly as collected.
+    const explicitDate = extractDate(message.content, new Date())
+    const explicitTime = extractTime(message.content)
+    let draftForContext = existingDraft
+    if (
+      (explicitDate && explicitDate !== existingDraft.preferredDate) ||
+      (explicitTime && explicitTime !== existingDraft.preferredTime)
+    ) {
+      const refreshed: AppointmentDraft = {
+        ...existingDraft,
+        history: [...existingDraft.history],
+        updatedAt: new Date().toISOString(),
+      }
+      if (explicitDate && explicitDate !== existingDraft.preferredDate) {
+        refreshed.preferredDate = explicitDate
+        refreshed.history.push({ field: "preferredDate", value: explicitDate, source: "user" })
+      }
+      if (explicitTime && explicitTime !== existingDraft.preferredTime) {
+        refreshed.preferredTime = explicitTime
+        refreshed.history.push({ field: "preferredTime", value: explicitTime, source: "user" })
+      }
+      refreshed.expectedField = nextMissingField(refreshed)
+      refreshed.status = refreshed.expectedField ? "collecting" : "ready"
+      await prisma.conversation.update({
+        where: { id: context.conversation.id },
+        data: {
+          metadata: writeDraftToMetadata(context.conversation.metadata, refreshed),
+        },
+      })
+      logger.info("[APPOINTMENT] APPOINTMENT_DRAFT_UPDATED (explicit date/time during interruption)", {
+        conversationId: context.conversation.id,
+        clinicId: context.clinicId,
+        preferredDate: refreshed.preferredDate,
+        preferredTime: refreshed.preferredTime,
+      })
+      // Refresh the in-memory copy so the context header and everything
+      // downstream see the NEW values (never stale ones).
+      context.conversation.metadata = writeDraftToMetadata(context.conversation.metadata, refreshed)
+      draftForContext = refreshed
+    }
     // Small context: recent window + topic header + one-line draft
     // summary so the AI knows a booking is mid-flight and must not
-    // re-ask collected fields. The draft itself is NOT modified.
+    // re-ask collected fields.
     const { messages, nextMetadata } = buildSmallContext({
       messageContent: message.content,
       history: conversationHistory,
       currentMetadata: context.conversation.metadata,
       route: decision.route,
-      draft: existingDraft,
+      draft: draftForContext,
     })
     const aiResult = await generateAIResponseWithTools(
       message.content,
