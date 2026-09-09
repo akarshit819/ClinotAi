@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db"
 import { Prisma } from "@prisma/client"
 import { addMinutes, startOfDay, endOfDay, format, parse, isBefore, isAfter, addDays, setHours, setMinutes, differenceInMinutes } from "date-fns"
-import { toZonedTime, formatInTimeZone } from "date-fns-tz"
+import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz"
 
 export interface ClinicHours {
   dayOfWeek: number // 0 = Sunday, 6 = Saturday
@@ -59,6 +59,38 @@ function combineDateAndTime(date: Date, timeStr: string, timezone: string): Date
   const { hours, minutes } = parseTimeString(timeStr)
   const zonedDate = toZonedTime(date, timezone)
   return setMinutes(setHours(zonedDate, hours), minutes)
+}
+
+/**
+ * Resolve the clinic timezone to a VALID IANA zone. An invalid stored
+ * value (e.g. "IST", "UTC+5:30", "") makes date-fns-tz throw RangeError
+ * on every availability computation — which previously surfaced as
+ * every slot reporting "taken". Never let a bad timezone poison checks.
+ */
+export function resolveTimezone(raw: string | null | undefined): string {
+  const fallback = "America/New_York"
+  if (!raw || typeof raw !== "string" || !raw.trim()) return fallback
+  const tz = raw.trim()
+  try {
+    // Throws RangeError for unknown zones.
+    formatInTimeZone(new Date(), tz, "yyyy-MM-dd")
+    return tz
+  } catch {
+    return fallback
+  }
+}
+
+/** Validated clinic timezone (single DB read, safe default). */
+export async function getClinicTimezone(clinicId: string): Promise<string> {
+  try {
+    const clinic = await prisma.clinic.findUnique({
+      where: { id: clinicId },
+      select: { timezone: true },
+    })
+    return resolveTimezone(clinic?.timezone)
+  } catch {
+    return "America/New_York"
+  }
 }
 
 export async function getClinicHours(clinicId: string): Promise<ClinicHours[]> {
@@ -140,8 +172,12 @@ async function getBookedSlots(
   providerId?: string,
   client: Prisma.TransactionClient = prisma as unknown as Prisma.TransactionClient
 ): Promise<BookedSlot[]> {
-  const startDateStr = format(startDate, "yyyy-MM-dd")
-  const endDateStr = format(endDate, "yyyy-MM-dd")
+  // Widen by a day on each side: the caller passes server-local day
+  // bounds, but stored preferredDates are clinic-local wall dates. A
+  // clinic day near midnight can fall outside the server day window.
+  // Precision comes from interval overlap below, not from this filter.
+  const startDateStr = format(addDays(startDate, -1), "yyyy-MM-dd")
+  const endDateStr = format(addDays(endDate, 1), "yyyy-MM-dd")
 
   const where: any = {
     clinicId,
@@ -169,34 +205,39 @@ async function getBookedSlots(
     },
   })
 
-  // Fetch timezone once
+  // Fetch timezone once — validated, so one malformed clinic row or
+  // appointment can never poison the whole availability check.
   const clinic = await client.clinic.findUnique({
     where: { id: clinicId },
     select: { timezone: true },
   })
-  const timezone = clinic?.timezone || "America/New_York"
+  const timezone = resolveTimezone(clinic?.timezone)
 
-  return appointments
-    .filter((a) => a.preferredDate && a.preferredTime)
-    .map((a) => {
-      const startTime = combineDateAndTime(
-        parse(a.preferredDate!, "yyyy-MM-dd", new Date()),
-        a.preferredTime!,
-        timezone
-      )
+  const slots: BookedSlot[] = []
+  for (const a of appointments) {
+    if (!a.preferredDate || !a.preferredTime || !a.doctor) continue
+    try {
+      // TRUE instants in clinic wall time (NOT server-local shifted
+      // dates): fromZonedTime interprets "YYYY-MM-DD HH:mm" as wall
+      // time in the clinic timezone, so comparisons against requested
+      // slots are correct on any server timezone.
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(a.preferredDate)) continue
+      if (!/^\d{1,2}:\d{2}$/.test(a.preferredTime)) continue
+      const startTime = fromZonedTime(`${a.preferredDate} ${a.preferredTime}`, timezone)
+      if (Number.isNaN(startTime.getTime())) continue
       // Use the stored end time when present; fall back to the default duration
-      const endTime = a.endTime
-        ? combineDateAndTime(parse(a.preferredDate!, "yyyy-MM-dd", new Date()), a.endTime, timezone)
-        : addMinutes(startTime, DEFAULT_APPOINTMENT_DURATION)
-
-      return {
-        id: a.id,
-        startTime,
-        endTime,
-        providerId: a.doctor || "",
-      }
-    })
-    .filter((s) => s.providerId)
+      const endTime =
+        a.endTime && /^\d{1,2}:\d{2}$/.test(a.endTime)
+          ? fromZonedTime(`${a.preferredDate} ${a.endTime}`, timezone)
+          : addMinutes(startTime, DEFAULT_APPOINTMENT_DURATION)
+      if (Number.isNaN(endTime.getTime())) continue
+      slots.push({ id: a.id, startTime, endTime, providerId: a.doctor })
+    } catch {
+      // A single malformed appointment row must never fail the check.
+      continue
+    }
+  }
+  return slots
 }
 
 export async function generateAvailableSlots(
@@ -210,12 +251,7 @@ export async function generateAvailableSlots(
     durationMinutes = DEFAULT_APPOINTMENT_DURATION,
   } = options
 
-  const clinic = await prisma.clinic.findUnique({
-    where: { id: clinicId },
-    select: { timezone: true },
-  })
-
-  const timezone = clinic?.timezone || "America/New_York"
+  const timezone = await getClinicTimezone(clinicId)
   const clinicHours = await getClinicHours(clinicId)
   const providers = await getProvidersForClinic(clinicId)
 
@@ -227,18 +263,33 @@ export async function generateAvailableSlots(
 
   const slots: TimeSlot[] = []
 
-  for (let day = startOfDay(startDate); day <= endDate; day = addDays(day, 1)) {
+  // Iterate CLINIC-LOCAL days (not server days): the bounds are instants,
+  // each of which falls on a definite clinic calendar day. Slots are TRUE
+  // instants via fromZonedTime, so overlap checks and isAfter(now) hold
+  // on any server timezone.
+  const startDayStr = formatInTimeZone(startDate, timezone, "yyyy-MM-dd")
+  const endDayStr = formatInTimeZone(endDate, timezone, "yyyy-MM-dd")
+  for (
+    let day = parse(startDayStr, "yyyy-MM-dd", new Date());
+    format(day, "yyyy-MM-dd") <= endDayStr;
+    day = addDays(day, 1)
+  ) {
+    const dayStr = format(day, "yyyy-MM-dd")
     const dayOfWeek = day.getDay()
     const dayHours = clinicHours.find((h) => h.dayOfWeek === dayOfWeek)
 
     if (!dayHours || dayHours.isClosed) continue
 
     for (const provider of targetProviders) {
-      const { hours, minutes } = parseTimeString(dayHours.openTime)
-      const closeTime = parseTimeString(dayHours.closeTime)
-
-      let currentTime = combineDateAndTime(day, dayHours.openTime, timezone)
-      const dayEndTime = combineDateAndTime(day, dayHours.closeTime, timezone)
+      let currentTime: Date
+      let dayEndTime: Date
+      try {
+        currentTime = fromZonedTime(`${dayStr} ${dayHours.openTime}`, timezone)
+        dayEndTime = fromZonedTime(`${dayStr} ${dayHours.closeTime}`, timezone)
+      } catch {
+        continue
+      }
+      if (Number.isNaN(currentTime.getTime()) || Number.isNaN(dayEndTime.getTime())) continue
 
       while (isBefore(addMinutes(currentTime, durationMinutes), dayEndTime) ||
         differenceInMinutes(dayEndTime, currentTime) >= durationMinutes) {
@@ -267,6 +318,17 @@ export async function generateAvailableSlots(
   }
 
   return slots
+}
+
+/**
+ * Clinic-local wall-clock date/time strings for a TRUE instant.
+ * Use these (never server-local getters) when presenting slots.
+ */
+export function formatSlotInTimezone(d: Date, timezone: string): { date: string; time: string } {
+  return {
+    date: formatInTimeZone(d, timezone, "yyyy-MM-dd"),
+    time: formatInTimeZone(d, timezone, "HH:mm"),
+  }
 }
 
 export async function findAvailableSlots(
@@ -325,8 +387,11 @@ export async function checkSlotAvailability(
     providerId
   )
 
+  // Belt and suspenders: the DB query already filters by provider, but the
+  // overlap check re-verifies it so a filter failure can never block an
+  // unrelated provider's slot (or vice versa).
   return !bookedSlots.some(
-    (booked) => intervalsOverlap(startTime, endTime, booked.startTime, booked.endTime)
+    (booked) => booked.providerId === providerId && intervalsOverlap(startTime, endTime, booked.startTime, booked.endTime)
   )
 }
 

@@ -303,6 +303,7 @@ vi.mock("@/lib/db", () => {
       appointment: {
         findFirst: vi.fn(async () => null),
         findMany: vi.fn(async () => []),
+        findUnique: vi.fn(async () => ({ id: "appt-1" })),
         create: vi.fn(async (args: { data: Record<string, unknown> }) => ({
           id: "appt-1",
           ...args.data,

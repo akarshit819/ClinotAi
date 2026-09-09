@@ -23,7 +23,7 @@
 import { fromZonedTime } from "date-fns-tz"
 import { prisma } from "@/lib/db"
 import { logger } from "@/lib/logger"
-import { checkSlotAvailability, reserveSlot } from "./availability"
+import { checkSlotAvailability, reserveSlot, resolveTimezone } from "./availability"
 import type { AppointmentDraft } from "@/messaging/ai/appointment-state"
 
 export const BOOKING_SLOT_MINUTES = 30
@@ -92,6 +92,7 @@ export async function bookAppointmentFromDraft(req: BookingRequest): Promise<Boo
     // 1) Duplicate guard BEFORE creating anything: same clinic + phone +
     //    date + time already booked → reuse, never duplicate. This covers
     //    double-tap "confirm", webhook retries, and worker redelivery.
+    logger.info("[APPOINTMENT] APPOINTMENT_DUPLICATE_CHECK", { clinicId, date, time })
     const existing = await prisma.appointment.findFirst({
       where: {
         clinicId,
@@ -133,7 +134,8 @@ export async function bookAppointmentFromDraft(req: BookingRequest): Promise<Boo
       await prisma.patient.update({ where: { id: patient.id }, data: { name } })
     }
 
-    // 3) Pick the first staff provider free at the requested slot.
+    // 3) Pick a staff provider free at the requested slot. The draft's
+    //    previously chosen provider (from "choose for me") is tried first.
     const providers = await prisma.user.findMany({
       where: {
         clinicId,
@@ -147,6 +149,12 @@ export async function bookAppointmentFromDraft(req: BookingRequest): Promise<Boo
       logger.error("[APPOINTMENT] APPOINTMENT_CREATE_FAILED — no active providers", { clinicId })
       return { ok: false, reason: "no_provider" }
     }
+    const orderedProviders = draft.providerId
+      ? [
+          ...providers.filter((p) => p.id === draft.providerId),
+          ...providers.filter((p) => p.id !== draft.providerId),
+        ]
+      : providers
 
     // Timezone-safe: interpret the wall clock in the CLINIC's timezone
     // (never the server's). `new Date("2026-09-12T16:00:00")` parses in
@@ -156,7 +164,7 @@ export async function bookAppointmentFromDraft(req: BookingRequest): Promise<Boo
       where: { id: clinicId },
       select: { timezone: true },
     })
-    const clinicTimezone = clinicTzRow?.timezone || "America/New_York"
+    const clinicTimezone = resolveTimezone(clinicTzRow?.timezone)
     let startTime: Date
     try {
       startTime = fromZonedTime(`${date} ${time}`, clinicTimezone)
@@ -170,29 +178,89 @@ export async function bookAppointmentFromDraft(req: BookingRequest): Promise<Boo
       return { ok: false, reason: "error", error: "invalid_datetime" }
     }
 
+    // Availability is evaluated PER PROVIDER with outcomes tracked
+    // separately. A provider whose check THROWS is not "taken" — it is
+    // unknown. Only genuine unavailability (or a verified exact DB
+    // conflict below) may produce slot_taken.
     let chosenProvider: { id: string; name: string } | null = null
-    for (const p of providers) {
+    let unavailableCount = 0
+    let errorCount = 0
+    for (const p of orderedProviders) {
+      logger.info("[APPOINTMENT] APPOINTMENT_SLOT_CHECK", {
+        clinicId,
+        providerId: p.id,
+        date,
+        time,
+      })
       try {
         const free = await checkSlotAvailability(clinicId, startTime, endTime, p.id)
         if (free) {
           chosenProvider = p
+          logger.info("[APPOINTMENT] APPOINTMENT_SLOT_AVAILABLE", {
+            clinicId,
+            providerId: p.id,
+            date,
+            time,
+          })
           break
         }
+        unavailableCount += 1
       } catch (e) {
-        logger.warn("[APPOINTMENT] Availability check failed for provider, trying next", {
+        errorCount += 1
+        logger.error("[APPOINTMENT] Availability check errored for provider", {
           clinicId,
           providerId: p.id,
+          date,
+          time,
           error: e instanceof Error ? e.message : String(e),
         })
       }
     }
+    if (chosenProvider) {
+      logger.info("[APPOINTMENT] APPOINTMENT_PROVIDER_RESOLVED", {
+        clinicId,
+        providerId: chosenProvider.id,
+        providerName: chosenProvider.name,
+        date,
+        time,
+      })
+    }
     if (!chosenProvider) {
-      logger.info("[APPOINTMENT] Requested slot unavailable for all providers", { clinicId, date, time })
-      return { ok: false, reason: "slot_taken" }
+      // No provider verified free. "Taken" requires PROOF: an actual
+      // conflicting appointment row for this clinic + date + time.
+      // Anything else (e.g. every check errored) is an honest error —
+      // never a false "taken".
+      const conflicts = await findExactConflicts(clinicId, date, time)
+      if (conflicts.length > 0) {
+        logger.info("[APPOINTMENT] APPOINTMENT_SLOT_CONFLICT", {
+          clinicId,
+          date,
+          time,
+          conflictingAppointments: conflicts.length,
+          unavailableCount,
+          errorCount,
+        })
+        return { ok: false, reason: "slot_taken" }
+      }
+      logger.error("[APPOINTMENT] APPOINTMENT_CREATE_FAILED — availability unverifiable, no DB conflict", {
+        clinicId,
+        date,
+        time,
+        unavailableCount,
+        errorCount,
+      })
+      return { ok: false, reason: "error", error: "availability_unverifiable" }
     }
 
-    // 4) Atomic reservation (serializable + unique-constraint guard).
+    // 4) Atomic reservation (serializable + unique-constraint guard),
+    //    then VERIFY the row exists before reporting success.
     try {
+      logger.info("[APPOINTMENT] APPOINTMENT_DB_CREATE_STARTED", {
+        clinicId,
+        providerId: chosenProvider.id,
+        date,
+        time,
+      })
       const appointment = await reserveSlot(
         clinicId,
         startTime,
@@ -203,6 +271,17 @@ export async function bookAppointmentFromDraft(req: BookingRequest): Promise<Boo
         name,
         phone,
       )
+      const verified = await prisma.appointment.findUnique({
+        where: { id: appointment.id },
+        select: { id: true },
+      })
+      if (!verified) {
+        logger.error("[APPOINTMENT] APPOINTMENT_CREATE_FAILED — write not verifiable", {
+          clinicId,
+          appointmentId: appointment.id,
+        })
+        return { ok: false, reason: "error", error: "write_unverified" }
+      }
       logger.info("[APPOINTMENT] APPOINTMENT_CREATED", {
         clinicId,
         appointmentId: appointment.id,
@@ -222,7 +301,7 @@ export async function bookAppointmentFromDraft(req: BookingRequest): Promise<Boo
       const msg = e instanceof Error ? e.message : String(e)
       if (msg === "SLOT_NO_LONGER_AVAILABLE") {
         // Lost a race: distinguish "you already booked this" from
-        // "someone else just took the slot".
+        // "someone else just took the slot" from "no real conflict".
         const raced = await prisma.appointment.findFirst({
           where: {
             clinicId,
@@ -243,7 +322,22 @@ export async function bookAppointmentFromDraft(req: BookingRequest): Promise<Boo
             duplicate: true,
           }
         }
-        return { ok: false, reason: "slot_taken" }
+        const conflicts = await findExactConflicts(clinicId, date, time)
+        if (conflicts.length > 0) {
+          logger.info("[APPOINTMENT] APPOINTMENT_SLOT_CONFLICT", {
+            clinicId,
+            date,
+            time,
+            conflictingAppointments: conflicts.length,
+          })
+          return { ok: false, reason: "slot_taken" }
+        }
+        logger.error("[APPOINTMENT] APPOINTMENT_CREATE_FAILED — slot conflict unverifiable", {
+          clinicId,
+          date,
+          time,
+        })
+        return { ok: false, reason: "error", error: "availability_unverifiable" }
       }
       throw e
     }
@@ -251,6 +345,135 @@ export async function bookAppointmentFromDraft(req: BookingRequest): Promise<Boo
     const msg = e instanceof Error ? e.message : String(e)
     logger.error("[APPOINTMENT] APPOINTMENT_CREATE_FAILED", { clinicId, error: msg })
     return { ok: false, reason: "error", error: "booking_failed" }
+  }
+}
+
+export interface NearestSlotRequest {
+  clinicId: string
+  /** YYYY-MM-DD the patient is interested in. */
+  date: string
+  /** HH:MM 24h preference to stay close to (optional). */
+  preferredTime?: string
+  /** HH:MM to exclude (e.g. the just-taken time). */
+  excludeTime?: string
+  /** Max days to look ahead when the requested date is full. */
+  maxDaysAhead?: number
+}
+
+export interface NearestSlot {
+  date: string
+  time: string
+  providerId: string
+  providerName: string
+}
+
+/**
+ * Deterministic "choose for me": nearest available slot on the requested
+ * date, closest to the preferred time (or earliest when none given).
+ * NEVER invents availability — only slots computed from clinic hours
+ * minus real booked rows are returned.
+ */
+export async function findNearestAvailableSlot(req: NearestSlotRequest): Promise<NearestSlot | null> {
+  const { clinicId, date, preferredTime, excludeTime, maxDaysAhead = 7 } = req
+  const base = parseDateOnly(date)
+  if (!base) return null
+  const { findAvailableSlotsByRange, getClinicTimezone, formatSlotInTimezone } = await import("./availability")
+  const timezone = await getClinicTimezone(clinicId)
+
+  for (let offset = 0; offset <= maxDaysAhead; offset++) {
+    const day = new Date(base)
+    day.setDate(day.getDate() + offset)
+    const dayStart = new Date(day)
+    dayStart.setHours(0, 0, 0, 0)
+    const dayEnd = new Date(day)
+    dayEnd.setHours(23, 59, 59, 999)
+
+    let slots: Array<{ startTime: Date; endTime: Date; providerId: string; providerName: string; available: boolean }>
+    try {
+      slots = await findAvailableSlotsByRange({ clinicId, startDate: dayStart, endDate: dayEnd })
+    } catch (e) {
+      logger.error("[APPOINTMENT] Nearest-slot search failed", {
+        clinicId,
+        date,
+        error: e instanceof Error ? e.message : String(e),
+      })
+      return null
+    }
+
+    // Compare in CLINIC wall time (never server-local getters).
+    const open = slots.filter((s) => {
+      if (!s.available) return false
+      const wall = formatSlotInTimezone(s.startTime, timezone)
+      if (excludeTime && wall.time === excludeTime && wall.date === date) return false
+      return true
+    })
+    if (open.length === 0) continue
+
+    // Prefer the requested date; within it, closest to the preferred time
+    // (or earliest when none given).
+    open.sort((a, b) => {
+      const wa = formatSlotInTimezone(a.startTime, timezone)
+      const wb = formatSlotInTimezone(b.startTime, timezone)
+      const aOnDate = wa.date === date ? 0 : 1
+      const bOnDate = wb.date === date ? 0 : 1
+      if (aOnDate !== bOnDate) return aOnDate - bOnDate
+      if (preferredTime) {
+        return Math.abs(minutesBetween(preferredTime, wa.time)) - Math.abs(minutesBetween(preferredTime, wb.time))
+      }
+      return a.startTime.getTime() - b.startTime.getTime()
+    })
+
+    const pick = open[0]
+    const wall = formatSlotInTimezone(pick.startTime, timezone)
+    return {
+      date: wall.date,
+      time: wall.time,
+      providerId: pick.providerId,
+      providerName: pick.providerName,
+    }
+  }
+  return null
+}
+
+function parseDateOnly(dateIso: string): Date | null {
+  const m = dateIso.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return null
+  const d = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10))
+  if (d.getMonth() !== parseInt(m[2], 10) - 1 || d.getDate() !== parseInt(m[3], 10)) return null
+  return d
+}
+
+function minutesBetween(aHHMM: string, bHHMM: string): number {
+  const [ah, am] = aHHMM.split(":").map(Number)
+  const [bh, bm] = bHHMM.split(":").map(Number)
+  return ah * 60 + am - (bh * 60 + bm)
+}
+
+/**
+ * Exact-conflict proof: active appointment rows for this clinic + date +
+ * time (any provider). "Taken" is ONLY reported when this is non-empty.
+ */
+async function findExactConflicts(
+  clinicId: string,
+  date: string,
+  time: string,
+): Promise<Array<{ id: string }>> {
+  try {
+    return await prisma.appointment.findMany({
+      where: {
+        clinicId,
+        preferredDate: date,
+        preferredTime: time,
+        status: { in: ACTIVE_APPOINTMENT_STATUSES },
+      },
+      select: { id: true },
+    })
+  } catch (e) {
+    logger.error("[APPOINTMENT] Exact-conflict lookup failed", {
+      clinicId,
+      error: e instanceof Error ? e.message : String(e),
+    })
+    return []
   }
 }
 

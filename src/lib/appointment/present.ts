@@ -20,6 +20,7 @@ export interface DashboardAppointment {
   date: string | null
   preferredTime: string | null
   time: string | null
+  providerName: string | null
   isEmergency: boolean
   status: string
   createdAt: unknown
@@ -33,6 +34,7 @@ type AppointmentRow = {
   reason?: string | null
   preferredDate?: string | null
   preferredTime?: string | null
+  providerName?: string | null
   isEmergency?: boolean
   status?: string
   createdAt?: unknown
@@ -53,6 +55,7 @@ export function toDashboardAppointment(row: AppointmentRow): DashboardAppointmen
     date: row.preferredDate ?? null,
     preferredTime: row.preferredTime ?? null,
     time: row.preferredTime ?? null,
+    providerName: row.providerName ?? null,
     isEmergency: Boolean(row.isEmergency),
     status: typeof row.status === "string" ? row.status : "pending",
     createdAt: row.createdAt ?? null,

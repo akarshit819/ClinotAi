@@ -27,6 +27,7 @@ interface Appointment {
   reason: string | null
   date: string | null
   time: string | null
+  providerName?: string | null
   isEmergency: boolean
   status: string
   createdAt: string
@@ -35,6 +36,7 @@ interface Appointment {
 export default function AppointmentsPage() {
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [view, setView] = useState<"list" | "calendar">("list")
   const [weekStart, setWeekStart] = useState(() => {
     const d = new Date()
@@ -45,9 +47,33 @@ export default function AppointmentsPage() {
   const [selected, setSelected] = useState<Appointment | null>(null)
 
   useEffect(() => {
+    // Defensive: the API returns { error } shapes on auth/DB failures.
+    // Setting that object as the list crashed the page into the error
+    // boundary ("Failed to load dashboard data"). Validate instead.
     apiFetch("/api/appointments")
-      .then((r) => r.json())
-      .then(setAppointments)
+      .then(async (r) => {
+        const data = await r.json().catch(() => null)
+        if (!r.ok) {
+          throw new Error(
+            (data && data.error) || `Request failed (${r.status})`,
+          )
+        }
+        if (!Array.isArray(data)) {
+          throw new Error("Unexpected response shape")
+        }
+        setAppointments(data)
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : "Failed to load appointments"
+        // Safe dev exposure: full message only in development logs/UI;
+        // production keeps the generic card (details stay server-side).
+        console.error("[dashboard/appointments] load failed:", message)
+        setLoadError(
+          process.env.NODE_ENV === "development"
+            ? `Failed to load appointments: ${message}`
+            : "Failed to load appointments. Please try again.",
+        )
+      })
       .finally(() => setLoading(false))
   }, [])
 
@@ -76,8 +102,23 @@ export default function AppointmentsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
+      <div className="flex flex-col items-center justify-center min-h-[60vh]">
         <Loader2 className="h-8 w-8 animate-spin text-primary-500 dark:text-primary-400" />
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold text-navy-900 dark:text-navy-100">Appointments</h1>
+        <Card>
+          <CardContent className="text-center py-12">
+            <CalendarIcon className="h-12 w-12 mx-auto mb-3 text-navy-300 dark:text-navy-600" />
+            <p className="text-navy-500 dark:text-navy-400 font-medium">{loadError}</p>
+            <Button className="mt-4" onClick={() => window.location.reload()}>Try again</Button>
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -197,6 +238,12 @@ export default function AppointmentsPage() {
               <div className="p-3 rounded-xl bg-navy-50/50 dark:bg-navy-750/50">
                 <div className="text-xs text-navy-400 dark:text-navy-500 mb-1">Reason</div>
                 <div className="text-sm text-navy-700 dark:text-navy-300">{selected.reason}</div>
+              </div>
+            )}
+            {selected.providerName && (
+              <div className="p-3 rounded-xl bg-navy-50/50 dark:bg-navy-750/50">
+                <div className="text-xs text-navy-400 dark:text-navy-500 mb-1">Provider</div>
+                <div className="text-sm text-navy-700 dark:text-navy-300">{selected.providerName}</div>
               </div>
             )}
             <div className="p-3 rounded-xl bg-navy-50/50 dark:bg-navy-750/50">

@@ -42,18 +42,27 @@ import {
   isEmergencyOverride,
   isConfirmationMessage,
   isDenialMessage,
+  isChooseForMeMessage,
+  isListTimesMessage,
   extractAllFields,
   extractDate,
   extractYearCorrection,
   applyYearToDate,
   formatDateHuman,
+  formatTimeHuman,
   buildPrompt,
   buildConfirmationSummary,
   buildBookingConfirmation,
   nextMissingField,
   type AppointmentDraft,
 } from "./appointment-state"
-import { bookAppointmentFromDraft } from "@/lib/appointment/booking"
+import { bookAppointmentFromDraft, findNearestAvailableSlot } from "@/lib/appointment/booking"
+import {
+  findAvailableSlotsByRange,
+  getNextAvailableSlots,
+  getClinicTimezone,
+  formatSlotInTimezone,
+} from "@/lib/appointment/availability"
 import { classifyRoute, logRouteDecision, isSlotAnswerFor, type Route } from "./route-classifier"
 import {
   buildShortTermContext,
@@ -257,6 +266,111 @@ export async function runAiReceptionist(
   }
 
   // ========================================================================
+  // LEVEL 1.75: DELEGATED TIME CHOICE ("take according to yourself")
+  //   Deterministic: search REAL availability, prefer the SAME date and a
+  //   time close to the requested one. NEVER the generic fallback, NEVER
+  //   an LLM-invented time.
+  // ========================================================================
+  if (existingDraft?.active && isChooseForMeMessage(message.content)) {
+    if (!existingDraft.preferredDate) {
+      return {
+        response:
+          "I'd be happy to pick a time for you. Which date should I look at? " +
+          "You can say 'tomorrow' or a date like 'October 5'.",
+        intent: "appointment",
+        confidence: 0.9,
+        requiresClinic: false,
+        responseSource: "APPOINTMENT",
+      }
+    }
+    const previousTime = existingDraft.preferredTime
+    const nearest = await findNearestAvailableSlot({
+      clinicId: context.clinicId,
+      date: existingDraft.preferredDate,
+      preferredTime: previousTime || undefined,
+      excludeTime: previousTime || undefined,
+    })
+    if (!nearest) {
+      logger.info("[APPOINTMENT] Delegated choice found nothing available", {
+        conversationId: context.conversation.id,
+        clinicId: context.clinicId,
+        preferredDate: existingDraft.preferredDate,
+      })
+      return {
+        response:
+          `I couldn't find any availability on ${formatDateHuman(existingDraft.preferredDate)}. ` +
+          "What other date works for you?",
+        intent: "appointment",
+        confidence: 0.85,
+        requiresClinic: false,
+        responseSource: "APPOINTMENT",
+      }
+    }
+    const updated: AppointmentDraft = {
+      ...existingDraft,
+      preferredDate: nearest.date,
+      preferredTime: nearest.time,
+      providerId: nearest.providerId,
+      providerName: nearest.providerName,
+      expectedField: null,
+      status: "ready",
+      updatedAt: new Date().toISOString(),
+      history: [
+        ...existingDraft.history,
+        { field: "preferredTime", value: `${nearest.date} ${nearest.time}`, source: "auto" },
+      ],
+    }
+    await prisma.conversation.update({
+      where: { id: context.conversation.id },
+      data: {
+        metadata: updateContextState(
+          writeDraftToMetadata(context.conversation.metadata, updated),
+          { currentTopic: "appointment", lastUserIntent: "delegated_time_choice" },
+        ),
+        intent: "appointment",
+        status: "active",
+        summary: message.content.slice(0, 200),
+      },
+    })
+    logger.info("[APPOINTMENT] APPOINTMENT_DRAFT_UPDATED (delegated choice)", {
+      conversationId: context.conversation.id,
+      clinicId: context.clinicId,
+      previousTime,
+      pickedDate: nearest.date,
+      pickedTime: nearest.time,
+      providerName: nearest.providerName,
+    })
+    const pickedHuman = `${formatTimeHuman(nearest.time)} on ${formatDateHuman(nearest.date)}`
+    return {
+      response: previousTime
+        ? `${formatTimeHuman(previousTime)} is unavailable. The nearest available time I found is ${pickedHuman}.\n\nShall I confirm this appointment?`
+        : `The nearest available time I found is ${pickedHuman}.\n\nShall I confirm this appointment?`,
+      intent: "appointment",
+      confidence: 0.9,
+      requiresClinic: false,
+      responseSource: "APPOINTMENT",
+    }
+  }
+
+  // ========================================================================
+  // LEVEL 1.76: DETERMINISTIC AVAILABILITY LISTING ("what times are available")
+  //   Real computed slots only — the LLM must never invent availability.
+  // ========================================================================
+  if (existingDraft?.active && isListTimesMessage(message.content)) {
+    const listLines = await buildAvailableTimesMessage(
+      context.clinicId,
+      existingDraft.preferredDate || undefined,
+    )
+    return {
+      response: listLines,
+      intent: "appointment",
+      confidence: 0.9,
+      requiresClinic: false,
+      responseSource: "APPOINTMENT",
+    }
+  }
+
+  // ========================================================================
   // LEVEL 1.8: READY-DRAFT CONFIRMATION (deterministic booking)
   //   All slots collected. The user must explicitly confirm before ANY
   //   database write happens. Booking itself runs with NO LLM involved.
@@ -296,8 +410,15 @@ export async function runAiReceptionist(
           },
         })
         const confirmationText = result.duplicate
-          ? `Your appointment for ${formatDateHuman(existingDraft.preferredDate!)} at ` +
-            `${existingDraft.preferredTime} is already confirmed — no duplicate was created. We'll see you then!`
+          ? [
+              "Your appointment is already confirmed — no duplicate was created.",
+              "",
+              `Date: ${formatDateHuman(existingDraft.preferredDate!)}`,
+              `Time: ${formatTimeHuman(existingDraft.preferredTime!)}`,
+              `Patient: ${existingDraft.patientName || "—"}`,
+              "",
+              "We look forward to seeing you.",
+            ].join("\n")
           : buildBookingConfirmation(existingDraft)
         return {
           response: confirmationText,
@@ -748,6 +869,58 @@ export async function runAiReceptionist(
     confidence: 0.7,
     requiresClinic: false,
     responseSource: hadAiResponse ? "AI" : "FALLBACK",
+  }
+}
+
+/**
+ * Deterministic availability listing from REAL computed slots.
+ * With a draft date: up to 5 open times that day. Without: the next few
+ * open slots across days. Never LLM-invented.
+ */
+async function buildAvailableTimesMessage(clinicId: string, dateIso?: string): Promise<string> {
+  const timezone = await getClinicTimezone(clinicId)
+  try {
+    if (dateIso) {
+      const m = dateIso.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+      if (!m) return "Which date should I check availability for?"
+      const day = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10))
+      const start = new Date(day)
+      start.setHours(0, 0, 0, 0)
+      const end = new Date(day)
+      end.setHours(23, 59, 59, 999)
+      const slots = await findAvailableSlotsByRange({ clinicId, startDate: start, endDate: end })
+      const open = slots.filter((s) => {
+        if (!s.available) return false
+        return formatSlotInTimezone(s.startTime, timezone).date === dateIso
+      }).slice(0, 5)
+      if (open.length === 0) {
+        return (
+          `I don't see any availability on ${formatDateHuman(dateIso)}. ` +
+          "What other date works for you?"
+        )
+      }
+      const times = open.map((s) => formatTimeHuman(formatSlotInTimezone(s.startTime, timezone).time))
+      return (
+        `Here is what I have open on ${formatDateHuman(dateIso)}:\n` +
+        times.map((t) => `• ${t}`).join("\n") +
+        `\n\nWhich time works for you?`
+      )
+    }
+    const next = await getNextAvailableSlots(clinicId, 5)
+    if (next.length === 0) {
+      return "I couldn't find any open slots right now. Our team will follow up with options shortly."
+    }
+    const lines = next.map((s) => {
+      const wall = formatSlotInTimezone(s.startTime, timezone)
+      return `• ${formatDateHuman(wall.date)} at ${formatTimeHuman(wall.time)}`
+    })
+    return `Here are the next available slots:\n${lines.join("\n")}\n\nWhich one works for you?`
+  } catch (e) {
+    logger.error("[APPOINTMENT] Availability listing failed", {
+      clinicId,
+      error: e instanceof Error ? e.message : String(e),
+    })
+    return "I couldn't check availability just now. Please try again in a moment."
   }
 }
 

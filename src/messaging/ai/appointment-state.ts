@@ -642,6 +642,38 @@ export function isDenialMessage(message: string): boolean {
   return DENY_PATTERNS.some((re) => re.test(text))
 }
 
+// === Delegation intents ("choose for me" / "what's available") ============
+// Deterministic appointment behavior: when the user delegates the time
+// choice, the system searches REAL availability instead of asking the
+// LLM (which invents times) or falling back generically.
+
+const CHOOSE_FOR_ME_PATTERNS: RegExp[] = [
+  /\btake\s+(it\s+)?according\s+to\s+yourself\b/i,
+  /\b(you\s+(choose|decide|pick)|choose\s+for\s+me|decide\s+for\s+me|pick\s+for\s+me)\b/i,
+  /\b(any\s+(available\s+)?time|whatever(\s+is)?\s+(available|free)|your\s+choice|you\s+decide)\b/i,
+  /\b(earliest\s+available|first\s+available|soonest\s+available)\b/i,
+]
+
+export function isChooseForMeMessage(message: string): boolean {
+  const text = message.trim()
+  if (!text || text.length > 140) return false
+  return CHOOSE_FOR_ME_PATTERNS.some((re) => re.test(text))
+}
+
+const LIST_TIMES_PATTERNS: RegExp[] = [
+  /\bwhat\s+times?\s+are\s+available\b/i,
+  /\bshow\s+me\s+.*\b(available|slots|times)\b/i,
+  /\bavailable\s+(times|slots)\b/i,
+  /\bwhen\s+are\s+you\s+(free|available)\b/i,
+  /\bopen\s+slots\b/i,
+]
+
+export function isListTimesMessage(message: string): boolean {
+  const text = message.trim()
+  if (!text || text.length > 140) return false
+  return LIST_TIMES_PATTERNS.some((re) => re.test(text))
+}
+
 // === Year correction ======================================================
 // "not 2027, 2026" / "it's 2026" / "year is 2026" / bare "2026" while a
 // draft holds a date: deterministically rewrite the draft year instead of
@@ -705,14 +737,18 @@ export function buildConfirmationSummary(draft: AppointmentDraft): string {
 }
 
 export function buildBookingConfirmation(draft: AppointmentDraft): string {
-  const firstName = draft.patientName?.split(/\s+/)[0]
-  return (
-    `Your appointment has been confirmed for ` +
-    `${draft.preferredDate ? formatDateHuman(draft.preferredDate) : "your requested date"}` +
-    `${draft.preferredTime ? ` at ${formatTimeHuman(draft.preferredTime)}` : ""}` +
-    `${draft.reason ? ` for ${draft.reason}` : ""}.` +
-    `${firstName ? ` We'll see you then, ${firstName}!` : " We'll see you then!"}`
-  )
+  // Sent ONLY after the database write is verified. Structured lines so
+  // the patient can scan date/time at a glance.
+  const lines = [
+    "Your appointment has been confirmed.",
+    "",
+    `Date: ${draft.preferredDate ? formatDateHuman(draft.preferredDate) : "—"}`,
+    `Time: ${draft.preferredTime ? formatTimeHuman(draft.preferredTime) : "—"}`,
+    `Patient: ${draft.patientName || "—"}`,
+  ]
+  if (draft.reason) lines.push(`Reason: ${draft.reason}`)
+  lines.push("", "We look forward to seeing you.")
+  return lines.join("\n")
 }
 
 // === Persistence helpers ==================================================
