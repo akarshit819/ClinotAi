@@ -70,6 +70,10 @@ vi.mock("@/lib/db", () => {
           emergencyPhone: "+15559999999",
         })),
       },
+      job: {
+        findUnique: vi.fn(async () => null),
+        create: vi.fn(async (args: { data: Record<string, unknown> }) => ({ id: "job-1", ...args.data })),
+      },
       fAQ: { findMany: vi.fn(async () => []) },
       knowledgeBase: { findMany: vi.fn(async () => []) },
       conversation: { update: vi.fn(async () => ({})) },
@@ -77,6 +81,13 @@ vi.mock("@/lib/db", () => {
     },
   }
 })
+
+vi.mock("@/integrations/token-store", () => ({
+  getCredentials: vi.fn(async () => ({
+    accessToken: "test-wa-token",
+    metadata: { phoneNumberId: "pnid-1", wabaId: "waba-1" },
+  })),
+}))
 
 vi.mock("@/lib/api", () => ({
   getClinicId: vi.fn(async () => ({ clinicId: "clinic-1", userId: "u-1" })),
@@ -508,6 +519,166 @@ describe("Soft delete: manual dashboard deletes hide rows without destroying dat
     })
     const dupCall = (prisma.appointment.findFirst as any).mock.calls[0][0]
     expect(dupCall.where).toMatchObject({ isDeleted: false })
+  })
+})
+
+describe("Owner cancel → patient WhatsApp notification (once, after write)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  function confirmedAppointment() {
+    return {
+      id: "appt-1",
+      clinicId: "clinic-1",
+      patientName: "Akarshit",
+      phone: "8700879404",
+      reason: "Headache",
+      preferredDate: "2026-10-05",
+      preferredTime: "16:00",
+      status: "confirmed",
+      isDeleted: false,
+    }
+  }
+
+  it("cancel transitions status and enqueues exactly one notification job", async () => {
+    const { prisma } = await import("../src/lib/db")
+    ;(prisma.appointment.findFirst as any).mockResolvedValue(confirmedAppointment())
+    ;(prisma.appointment.update as any).mockImplementation(async (args: any) => ({
+      ...confirmedAppointment(),
+      status: args.data.status,
+    }))
+    const { PATCH } = await import("../src/app/api/appointments/route")
+
+    const res = await PATCH(
+      new Request("http://localhost/api/appointments", {
+        method: "PATCH",
+        body: JSON.stringify({ id: "appt-1", status: "cancelled" }),
+      }),
+    )
+    const body = await res.json()
+    expect(body.status).toBe("cancelled")
+    // Cancellation itself succeeded…
+    expect(prisma.appointment.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "cancelled" }) }),
+    )
+    // …and exactly one notification job with a deterministic key.
+    const createCalls = (prisma.job.create as any).mock.calls
+    expect(createCalls.length).toBe(1)
+    expect(createCalls[0][0].data.idempotencyKey).toBe("appointment-cancel-appt-1")
+    expect(createCalls[0][0].data.payload.to).toBe("8700879404")
+    expect(body.notification).toEqual({ sent: true })
+  })
+
+  it("message carries date/time and the clinic's dynamic phone number", async () => {
+    const { buildCancellationMessage } = await import("../src/lib/appointment/cancel-notify")
+    const text = buildCancellationMessage({
+      patientName: "Akarshit",
+      preferredDate: "2026-10-05",
+      preferredTime: "16:00",
+      clinicPhone: "+911234567890",
+    })
+    expect(text).toContain("cancelled by the clinic")
+    expect(text).toContain("5 October 2026")
+    expect(text).toContain("4:00 PM")
+    expect(text).toContain("+911234567890")
+
+    const noPhone = buildCancellationMessage({ preferredDate: "2026-10-05", clinicPhone: null })
+    expect(noPhone).toContain("contact the clinic directly")
+    expect(noPhone).not.toContain("null")
+  })
+
+  it("re-cancel of an already-cancelled appointment sends nothing", async () => {
+    const { prisma } = await import("../src/lib/db")
+    ;(prisma.appointment.findFirst as any).mockResolvedValue({ ...confirmedAppointment(), status: "cancelled" })
+    const { PATCH } = await import("../src/app/api/appointments/route")
+    const res = await PATCH(
+      new Request("http://localhost/api/appointments", {
+        method: "PATCH",
+        body: JSON.stringify({ id: "appt-1", status: "cancelled" }),
+      }),
+    )
+    const body = await res.json()
+    expect(body.status).toBe("cancelled")
+    expect(prisma.appointment.update).not.toHaveBeenCalled()
+    expect((prisma.job.create as any).mock.calls.length).toBe(0)
+    expect(body.notification).toEqual({ sent: false, reason: "no_state_change" })
+  })
+
+  it("non-cancel status change sends nothing (existing behavior kept)", async () => {
+    const { prisma } = await import("../src/lib/db")
+    ;(prisma.appointment.findFirst as any).mockResolvedValue(confirmedAppointment())
+    ;(prisma.appointment.update as any).mockImplementation(async (args: any) => ({
+      ...confirmedAppointment(),
+      status: args.data.status,
+    }))
+    const { PATCH } = await import("../src/app/api/appointments/route")
+    const res = await PATCH(
+      new Request("http://localhost/api/appointments", {
+        method: "PATCH",
+        body: JSON.stringify({ id: "appt-1", status: "confirmed" }),
+      }),
+    )
+    // Same status → no-op, no notification.
+    expect((prisma.job.create as any).mock.calls.length).toBe(0)
+    expect((await res.json()).notification).toEqual({ sent: false, reason: "no_state_change" })
+  })
+
+  it("second cancel attempt reuses the queued job (never a duplicate message)", async () => {
+    const { prisma } = await import("../src/lib/db")
+    const { notifyAppointmentCancelled } = await import("../src/lib/appointment/cancel-notify")
+    ;(prisma.job.findUnique as any).mockResolvedValue({ id: "job-existing" })
+    const result = await notifyAppointmentCancelled({
+      clinicId: "clinic-1",
+      appointmentId: "appt-1",
+      phone: "8700879404",
+      preferredDate: "2026-10-05",
+      preferredTime: "16:00",
+    })
+    expect(result).toEqual({ sent: false, reason: "already_queued" })
+    expect((prisma.job.create as any).mock.calls.length).toBe(0)
+  })
+
+  it("missing patient phone keeps the cancellation, skips the message", async () => {
+    const { prisma } = await import("../src/lib/db")
+    ;(prisma.appointment.findFirst as any).mockResolvedValue({ ...confirmedAppointment(), phone: null })
+    ;(prisma.appointment.update as any).mockImplementation(async (args: any) => ({
+      ...confirmedAppointment(),
+      phone: null,
+      status: args.data.status,
+    }))
+    const { PATCH } = await import("../src/app/api/appointments/route")
+    const res = await PATCH(
+      new Request("http://localhost/api/appointments", {
+        method: "PATCH",
+        body: JSON.stringify({ id: "appt-1", status: "cancelled" }),
+      }),
+    )
+    const body = await res.json()
+    expect(body.status).toBe("cancelled")
+    expect(body.notification).toEqual({ sent: false, reason: "no_patient_phone" })
+    expect((prisma.job.create as any).mock.calls.length).toBe(0)
+  })
+
+  it("unconnected WhatsApp keeps the cancellation, skips the message", async () => {
+    const { prisma } = await import("../src/lib/db")
+    const tokenStore = await import("../src/integrations/token-store")
+    ;(tokenStore.getCredentials as any).mockResolvedValueOnce(null)
+    ;(prisma.appointment.findFirst as any).mockResolvedValue(confirmedAppointment())
+    ;(prisma.appointment.update as any).mockImplementation(async (args: any) => ({
+      ...confirmedAppointment(),
+      status: args.data.status,
+    }))
+    const { PATCH } = await import("../src/app/api/appointments/route")
+    const res = await PATCH(
+      new Request("http://localhost/api/appointments", {
+        method: "PATCH",
+        body: JSON.stringify({ id: "appt-1", status: "cancelled" }),
+      }),
+    )
+    const body = await res.json()
+    expect(body.status).toBe("cancelled")
+    expect(body.notification).toEqual({ sent: false, reason: "no_whatsapp" })
   })
 })
 

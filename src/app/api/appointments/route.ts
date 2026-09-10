@@ -4,6 +4,7 @@ import { getClinicId, apiError, handleApiError } from "@/lib/api"
 import { logger } from "@/lib/logger"
 import { reserveSlot } from "@/lib/appointment/availability"
 import { toDashboardAppointment } from "@/lib/appointment/present"
+import { notifyAppointmentCancelled } from "@/lib/appointment/cancel-notify"
 
 export async function GET(request: Request) {
   logger.info("[DASHBOARD] DASHBOARD_APPOINTMENTS_REQUEST", {
@@ -155,12 +156,53 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "ID and status are required" }, { status: 400 })
     }
 
+    // Scope to this clinic's visible rows (the raw `where: { id, clinicId }`
+    // update requires a unique filter and could touch other clinics' rows
+    // or throw — fetch first, then update by id).
+    const existing = await prisma.appointment.findFirst({
+      where: { id, clinicId, isDeleted: false },
+    })
+    if (!existing) {
+      return NextResponse.json({ error: "Appointment not found" }, { status: 404 })
+    }
+
+    // Already in the target state → no-op. In particular, re-cancelling
+    // must NOT re-notify the patient.
+    if (existing.status === status) {
+      return NextResponse.json({ ...existing, notification: { sent: false, reason: "no_state_change" } })
+    }
+
     const appointment = await prisma.appointment.update({
-      where: { id, clinicId },
+      where: { id: existing.id },
       data: { status },
     })
 
-    return NextResponse.json(appointment)
+    // Owner cancellation → notify the patient on WhatsApp, but ONLY after
+    // the write above succeeded. Notification failures never fail the
+    // cancellation itself (logged only).
+    let notification: { sent: boolean; reason?: string } = { sent: false, reason: "not_cancelled" }
+    if (status === "cancelled") {
+      try {
+        const result = await notifyAppointmentCancelled({
+          clinicId,
+          appointmentId: appointment.id,
+          patientName: appointment.patientName,
+          phone: appointment.phone,
+          preferredDate: appointment.preferredDate,
+          preferredTime: appointment.preferredTime,
+        })
+        notification = result.sent ? { sent: true } : { sent: false, reason: result.reason }
+      } catch (e) {
+        logger.error("[DASHBOARD] Cancellation notice error (cancellation kept)", {
+          clinicId,
+          appointmentId: appointment.id,
+          error: e instanceof Error ? e.message : String(e),
+        })
+        notification = { sent: false, reason: "error" }
+      }
+    }
+
+    return NextResponse.json({ ...appointment, notification })
   } catch (error) {
     return handleApiError(error, "Failed to update appointment")
   }
