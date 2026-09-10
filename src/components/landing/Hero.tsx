@@ -45,18 +45,23 @@ export function Hero() {
             </a>
           </div>
 
-          <div className="flex items-center justify-center gap-8 md:gap-16 flex-wrap animate-fade-in-up" style={{ animationDelay: "0.3s" }}>
+          <dl className="flex items-stretch justify-center gap-8 md:gap-0 flex-wrap animate-fade-in-up" style={{ animationDelay: "0.3s" }}>
             {[
-              { stat: "24/7", label: "Available" },
-              { stat: "Never", label: "Miss an Inquiry" },
-              { stat: "Works With", label: "Your Existing Workflow" },
-            ].map((item) => (
-              <div key={item.label} className="text-center">
-                <div className="text-2xl md:text-3xl font-bold text-primary-600 tracking-tight">{item.stat}</div>
-                <div className="text-sm text-navy-400 mt-0.5">{item.label}</div>
+              { stat: "24/7", label: "Always answering" },
+              { stat: "<60s", label: "Median first response" },
+              { stat: "0", label: "Missed inquiries" },
+            ].map((item, i) => (
+              <div
+                key={item.label}
+                className={`flex flex-col px-2 text-center md:px-10 ${i > 0 ? "md:border-l md:border-navy-100 dark:md:border-navy-800" : ""}`}
+              >
+                <dd className="text-2xl font-bold tracking-tight text-navy-900 dark:text-navy-100 md:text-3xl">
+                  {item.stat === "0" ? <span className="text-primary-600 dark:text-primary-400">{item.stat}</span> : item.stat}
+                </dd>
+                <dt className="mt-1 text-sm text-navy-400 dark:text-navy-500">{item.label}</dt>
               </div>
             ))}
-          </div>
+          </dl>
         </div>
       </div>
     </section>

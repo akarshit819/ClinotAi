@@ -10,6 +10,12 @@ const config: Config = {
         display: ["Inter", "system-ui", "-apple-system", "sans-serif"],
         mono: ["JetBrains Mono", "SF Mono", "monospace"],
       },
+      fontSize: {
+        "2xs": ["0.6875rem", { lineHeight: "1rem", letterSpacing: "0.01em" }],
+      },
+      spacing: {
+        4.5: "1.125rem",
+      },
       colors: {
         gray: {
           25: "#FCFCFD",

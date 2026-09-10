@@ -7,6 +7,8 @@ import { StatsCard } from "@/components/dashboard/StatsCard"
 import { Card, CardContent } from "@/components/ui/Card"
 import { Badge } from "@/components/ui/Badge"
 import { Button } from "@/components/ui/Button"
+import { PageHeader } from "@/components/ui/PageHeader"
+import { EmptyState } from "@/components/ui/EmptyState"
 import { Users, CalendarCheck, Clock, AlertTriangle, Phone, MessageSquare, CheckCircle, Calendar, Lightbulb, ArrowRight } from "lucide-react"
 import Link from "next/link"
 
@@ -59,11 +61,11 @@ async function DashboardStats() {
   ])
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      <StatsCard title="New Leads" value={totalLeads} icon={Users} color="primary" />
-      <StatsCard title="Appointments" value={appointments} icon={CalendarCheck} color="emerald" />
-      <StatsCard title="Awaiting Callback" value={pendingAppointments} icon={Clock} color="amber" />
-      <StatsCard title="Urgent Cases" value={emergencies} icon={AlertTriangle} color="red" />
+    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 animate-stagger">
+      <div className="animate-fade-in-up"><StatsCard title="New Leads" value={totalLeads} icon={Users} color="primary" /></div>
+      <div className="animate-fade-in-up"><StatsCard title="Appointments" value={appointments} icon={CalendarCheck} color="emerald" /></div>
+      <div className="animate-fade-in-up"><StatsCard title="Awaiting Callback" value={pendingAppointments} icon={Clock} color="amber" /></div>
+      <div className="animate-fade-in-up"><StatsCard title="Urgent Cases" value={emergencies} icon={AlertTriangle} color="red" /></div>
     </div>
   )
 }
@@ -83,50 +85,42 @@ async function LeadList() {
 
   if (recentLeads.length === 0) {
     return (
-      <Card className="p-10 text-center">
-        <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 mb-4">
-          <Users className="h-6 w-6" />
-        </div>
-        <p className="text-base font-semibold text-navy-900 dark:text-navy-100 mb-1">Ready to capture your first lead?</p>
-        <p className="text-sm text-navy-400 dark:text-navy-400 mb-4 max-w-sm mx-auto">
-          Install the Clinot widget on your website to start answering patient questions and collecting leads automatically.
-        </p>
-        <Link href="/dashboard/website-integration">
-          <Button size="sm">
-            Install Widget
-            <ArrowRight className="h-3.5 w-3.5" />
-          </Button>
-        </Link>
-      </Card>
+      <EmptyState
+        icon={Users}
+        title="Ready to capture your first lead?"
+        description="Install the Clinot widget on your website to start answering patient questions and collecting leads automatically."
+        action={
+          <Link href="/dashboard/website-integration">
+            <Button size="sm">
+              Install Widget
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Button>
+          </Link>
+        }
+      />
     )
   }
 
   return (
-    <div className="space-y-3">
-      {recentLeads.map((lead) => (
-        <Card key={lead.id} className="p-4">
-          <CardContent className="p-0">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400">
-                  <Users className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-navy-900 dark:text-navy-100">{lead.email?.split("@")[0] ?? lead.phone ?? "Unknown"}</p>
-                  <p className="text-xs text-navy-400 dark:text-navy-400">{lead.interestedIn ?? "General inquiry"}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <Badge variant={lead.status === "new" ? "primary" : "neutral"} size="sm">
-                  {lead.status}
-                </Badge>
-                <span className="text-xs text-navy-300 dark:text-navy-500">{new Date(lead.createdAt).toLocaleDateString()}</span>
-              </div>
+    <Card className="overflow-hidden">
+      <ul className="divide-y divide-navy-75 dark:divide-navy-700/60">
+        {recentLeads.map((lead) => (
+          <li key={lead.id} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-navy-25 dark:hover:bg-navy-750/60 sm:gap-4 sm:px-5">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600 dark:bg-primary-900/30 dark:text-primary-400">
+              <Users className="h-5 w-5" />
             </div>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-navy-900 dark:text-navy-100">{lead.email?.split("@")[0] ?? lead.phone ?? "Unknown"}</p>
+              <p className="truncate text-xs text-navy-400 dark:text-navy-400">{lead.interestedIn ?? "General inquiry"}</p>
+            </div>
+            <Badge variant={lead.status === "new" ? "primary" : "neutral"} size="sm">
+              {lead.status}
+            </Badge>
+            <span className="hidden shrink-0 text-xs text-navy-300 dark:text-navy-500 sm:inline">{new Date(lead.createdAt).toLocaleDateString()}</span>
+          </li>
+        ))}
+      </ul>
+    </Card>
   )
 }
 
@@ -184,20 +178,20 @@ export const metadata: Metadata = {
 
 export default function DashboardPage() {
   return (
-    <div className="space-y-8">
-      <div className="animate-fade-in">
-        <h1 className="text-xl font-bold text-navy-900 dark:text-navy-100 tracking-tight">AI Receptionist</h1>
-        <p className="text-sm text-navy-400 dark:text-navy-400 mt-1">Overview of patient activity and leads</p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="AI Receptionist"
+        description="Overview of patient activity and leads"
+      />
       <Suspense fallback={<StatsSkeleton />}>
         <DashboardStats />
       </Suspense>
-      <div className="space-y-4">
-        <h2 className="text-sm font-semibold text-navy-900 dark:text-navy-100">Recent Leads</h2>
+      <section className="space-y-3" aria-labelledby="recent-leads-heading">
+        <h2 id="recent-leads-heading" className="text-sm font-semibold tracking-tight text-navy-900 dark:text-navy-100">Recent Leads</h2>
         <Suspense fallback={<LeadsSkeleton />}>
           <LeadList />
         </Suspense>
-      </div>
+      </section>
       <Suspense fallback={null}>
         <AIInsight />
       </Suspense>

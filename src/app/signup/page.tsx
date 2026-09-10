@@ -3,8 +3,10 @@
 import { useState, FormEvent } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { Eye, EyeOff, Loader2, AlertTriangle, CheckCircle } from "lucide-react"
+import { Eye, EyeOff, AlertTriangle, CheckCircle } from "lucide-react"
 import { Button } from "@/components/ui/Button"
+import { FormField, TextInput } from "@/components/ui/FormField"
+import { AuthLayout } from "@/components/auth/AuthLayout"
 
 export default function SignupPage() {
   const router = useRouter()
@@ -62,83 +64,74 @@ export default function SignupPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-navy-50 via-white to-navy-25 p-4">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-navy-900">Clinot</h1>
-          <p className="text-sm text-navy-400 mt-1">Start your free trial</p>
-        </div>
+    <AuthLayout eyebrow="Start your free trial" title="Create account">
+      <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+        {error && (
+          <div role="alert" className="flex items-start gap-2 rounded-xl border border-danger-200 bg-danger-50 p-3 text-sm text-danger-700 dark:border-danger-800 dark:bg-danger-900/20 dark:text-danger-300">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
 
-        <form onSubmit={handleSubmit} className="bg-white rounded-2xl shadow-sm border border-navy-100 p-6 space-y-4">
-          <h2 className="text-lg font-bold text-navy-900">Create account</h2>
-
-          {error && (
-            <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-              <span>{error}</span>
-            </div>
+        <FormField label="Your Name" required>
+          {(id) => (
+            <TextInput id={id} type="text" value={name} onChange={(e) => setName(e.target.value)}
+              placeholder="Dr. Smith" autoComplete="name" autoFocus required />
           )}
+        </FormField>
 
-          <div>
-            <label htmlFor="name" className="block text-xs font-semibold text-navy-600 mb-1.5">Your Name</label>
-            <input id="name" type="text" value={name} onChange={(e) => setName(e.target.value)}
-              placeholder="Dr. Smith" autoComplete="name" autoFocus
-              className="w-full px-3 py-2.5 text-sm border border-navy-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-navy-400" />
-          </div>
+        <FormField label="Clinic Name" required>
+          {(id) => (
+            <TextInput id={id} type="text" value={clinicName} onChange={(e) => setClinicName(e.target.value)}
+              placeholder="Smith Family Dental" required />
+          )}
+        </FormField>
 
-          <div>
-            <label htmlFor="clinicName" className="block text-xs font-semibold text-navy-600 mb-1.5">Clinic Name</label>
-            <input id="clinicName" type="text" value={clinicName} onChange={(e) => setClinicName(e.target.value)}
-              placeholder="Smith Family Dental"
-              className="w-full px-3 py-2.5 text-sm border border-navy-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-navy-400" />
-          </div>
+        <FormField label="Email" required>
+          {(id) => (
+            <TextInput id={id} type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@clinic.com" autoComplete="email" required />
+          )}
+        </FormField>
 
-          <div>
-            <label htmlFor="email" className="block text-xs font-semibold text-navy-600 mb-1.5">Email</label>
-            <input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@clinic.com" autoComplete="email"
-              className="w-full px-3 py-2.5 text-sm border border-navy-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-navy-400" />
-          </div>
-
-          <div>
-            <label htmlFor="password" className="block text-xs font-semibold text-navy-600 mb-1.5">Password</label>
+        <FormField label="Password" required>
+          {(id) => (
             <div className="relative">
-              <input id="password" type={showPassword ? "text" : "password"} value={password}
+              <TextInput id={id} type={showPassword ? "text" : "password"} value={password}
                 onChange={(e) => setPassword(e.target.value)} placeholder="Create a strong password"
-                autoComplete="new-password"
-                className="w-full px-3 py-2.5 pr-10 text-sm border border-navy-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-navy-400" />
+                autoComplete="new-password" required className="pr-10" />
               <button type="button" onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-navy-300 hover:text-navy-500">
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md text-navy-300 transition-colors hover:text-navy-500 dark:text-navy-500 dark:hover:text-navy-300">
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
-            {password.length > 0 && (
-              <div className="mt-2 space-y-1">
-                {passwordChecks.map((check) => (
-                  <div key={check.label} className="flex items-center gap-1.5 text-2xs">
-                    {check.met ? (
-                      <CheckCircle className="h-3 w-3 text-emerald-500" />
-                    ) : (
-                      <div className="h-3 w-3 rounded-full border border-navy-200" />
-                    )}
-                    <span className={check.met ? "text-emerald-600" : "text-navy-400"}>{check.label}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          )}
+        </FormField>
+        {password.length > 0 && (
+          <ul className="space-y-1" aria-label="Password requirements">
+            {passwordChecks.map((check) => (
+              <li key={check.label} className="flex items-center gap-1.5 text-2xs">
+                {check.met ? (
+                  <CheckCircle className="h-3 w-3 text-emerald-500" />
+                ) : (
+                  <div className="h-3 w-3 rounded-full border border-navy-200 dark:border-navy-600" />
+                )}
+                <span className={check.met ? "text-emerald-600 dark:text-emerald-400" : "text-navy-400 dark:text-navy-500"}>{check.label}</span>
+              </li>
+            ))}
+          </ul>
+        )}
 
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {loading ? "Creating account..." : "Create account"}
-          </Button>
+        <Button type="submit" className="w-full" loading={loading}>
+          {loading ? "Creating account..." : "Create account"}
+        </Button>
 
-          <p className="text-center text-xs text-navy-400">
-            Already have an account?{" "}
-            <Link href="/login" className="font-medium text-navy-700 hover:text-navy-900">Sign in</Link>
-          </p>
-        </form>
-      </div>
-    </div>
+        <p className="text-center text-xs text-navy-400 dark:text-navy-500">
+          Already have an account?{" "}
+          <Link href="/login" className="font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300">Sign in</Link>
+        </p>
+      </form>
+    </AuthLayout>
   )
 }

@@ -23,7 +23,7 @@ export function StatsCard({ title, value, change, icon: Icon, color = "primary" 
     <div className="rounded-2xl border border-navy-100 dark:border-navy-700 bg-white dark:bg-navy-800 p-5 shadow-card dark:shadow-none transition-all duration-200 hover:shadow-card-hover dark:hover:border-navy-600">
       <div className="flex items-start justify-between mb-3">
         <div className={cn("flex h-9 w-9 items-center justify-center rounded-xl", colors[color])}>
-          <Icon className="h-4.5 w-4.5" />
+          <Icon className="h-[18px] w-[18px]" />
         </div>
         {change && (
           <span className="text-2xs font-medium text-success-600 bg-success-50 ring-1 ring-success-100/50 px-2 py-0.5 rounded-full">

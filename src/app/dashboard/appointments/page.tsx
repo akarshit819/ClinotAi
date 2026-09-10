@@ -4,6 +4,9 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
 import { Badge } from "@/components/ui/Badge"
+import { PageHeader } from "@/components/ui/PageHeader"
+import { EmptyState } from "@/components/ui/EmptyState"
+import { Modal } from "@/components/ui/Modal"
 import { Calendar as CalendarIcon, Loader2, ChevronLeft, ChevronRight, Clock, User, Phone, X, CheckCircle, XCircle, Trash2 } from "lucide-react"
 import { formatDateTime } from "@/lib/utils"
 import { apiFetch } from "@/lib/client-auth"
@@ -144,30 +147,46 @@ export default function AppointmentsPage() {
   if (loadError) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-navy-900 dark:text-navy-100">Appointments</h1>
-        <Card>
-          <CardContent className="text-center py-12">
-            <CalendarIcon className="h-12 w-12 mx-auto mb-3 text-navy-300 dark:text-navy-600" />
-            <p className="text-navy-500 dark:text-navy-400 font-medium">{loadError}</p>
-            <Button className="mt-4" onClick={() => window.location.reload()}>Try again</Button>
-          </CardContent>
-        </Card>
+        <PageHeader title="Appointments" description="Manage upcoming patient visits" />
+        <EmptyState
+          icon={CalendarIcon}
+          title="Couldn't load appointments"
+          description={loadError}
+          action={<Button onClick={() => window.location.reload()}>Try again</Button>}
+        />
       </div>
     )
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-navy-900 dark:text-navy-100">Appointments</h1>
-          <p className="text-sm text-navy-400 dark:text-navy-400 mt-1">{appointments.length} total appointments</p>
-        </div>
-        <div className="flex items-center gap-2 bg-navy-50 dark:bg-navy-800 rounded-xl p-1">
-          <button onClick={() => setView("list")} className={`px-3 py-1.5 text-sm rounded-lg font-medium transition-colors ${view === "list" ? "bg-white dark:bg-navy-700 shadow-sm text-navy-900 dark:text-navy-100" : "text-navy-500 dark:text-navy-400 hover:text-navy-700 dark:hover:text-navy-200"}`}>List</button>
-          <button onClick={() => setView("calendar")} className={`px-3 py-1.5 text-sm rounded-lg font-medium transition-colors ${view === "calendar" ? "bg-white dark:bg-navy-700 shadow-sm text-navy-900 dark:text-navy-100" : "text-navy-500 dark:text-navy-400 hover:text-navy-700 dark:hover:text-navy-200"}`}>Calendar</button>
-        </div>
-      </div>
+      <PageHeader
+        title="Appointments"
+        description={`${appointments.length} total appointment${appointments.length === 1 ? "" : "s"}`}
+        actions={
+          <div
+            role="tablist"
+            aria-label="Appointment view"
+            className="flex items-center gap-0.5 rounded-xl border border-navy-100 bg-navy-50 p-1 dark:border-navy-700 dark:bg-navy-800"
+          >
+            {(["list", "calendar"] as const).map((v) => (
+              <button
+                key={v}
+                role="tab"
+                aria-selected={view === v}
+                onClick={() => setView(v)}
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium capitalize transition-all duration-150 ${
+                  view === v
+                    ? "bg-white text-navy-900 shadow-sm dark:bg-navy-700 dark:text-navy-100"
+                    : "text-navy-500 hover:text-navy-700 dark:text-navy-400 dark:hover:text-navy-200"
+                }`}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+        }
+      />
 
       {view === "calendar" && (
         <Card>
@@ -211,156 +230,189 @@ export default function AppointmentsPage() {
       )}
 
       {view === "list" && (
-        <div className="space-y-3">
-          {appointments.length === 0 ? (
-            <Card>
-              <CardContent className="text-center py-12">
-                <CalendarIcon className="h-12 w-12 mx-auto mb-3 text-navy-300 dark:text-navy-600" />
-                <p className="text-navy-500 dark:text-navy-400 font-medium">No appointments yet</p>
-              </CardContent>
-            </Card>
-          ) : (
-            appointments.map((a) => (
-              <Card key={a.id} hover className="cursor-pointer" onClick={() => setSelected(selected?.id === a.id ? null : a)}>
-                <CardContent className="pt-5">
-                  <div className="flex items-start gap-3">
-                    <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${
-                      a.isEmergency ? "bg-red-50 dark:bg-red-900/30" : "bg-primary-50 dark:bg-primary-900/30"
-                    }`}>
-                      <CalendarIcon className={`h-5 w-5 ${a.isEmergency ? "text-red-500" : "text-primary-500"}`} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-sm font-semibold text-navy-900 dark:text-navy-100">{a.patientName || "Unnamed"}</span>
-                        <Badge variant={a.isEmergency ? "danger" : "neutral"}>{a.isEmergency ? "Emergency" : "Routine"}</Badge>
-                        <Badge variant={a.status === "confirmed" ? "success" : a.status === "pending" ? "warning" : "danger"}>{a.status}</Badge>
-                        <span className="flex-1" />
-                        <button
-                          aria-label={`Delete appointment for ${a.patientName || "patient"}`}
-                          title="Delete appointment"
-                          onClick={(e) => { e.stopPropagation(); setDeleteError(null); setPendingDelete(a) }}
-                          className="p-1.5 rounded-lg text-navy-300 hover:text-red-500 hover:bg-red-50 dark:text-navy-600 dark:hover:text-red-400 dark:hover:bg-red-900/20"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+        appointments.length === 0 ? (
+          <EmptyState
+            icon={CalendarIcon}
+            title="No appointments yet"
+            description="Booked appointments will appear here with patient details, date, time, and status."
+          />
+        ) : (
+          <Card className="animate-fade-in overflow-hidden">
+            <ul className="divide-y divide-navy-75 dark:divide-navy-700/60">
+              {appointments.map((a) => {
+                const isSelected = selected?.id === a.id
+                return (
+                  <li key={a.id}>
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelected(isSelected ? null : a)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault()
+                          setSelected(isSelected ? null : a)
+                        }
+                      }}
+                      className={`flex cursor-pointer items-center gap-3 px-4 py-3.5 transition-colors duration-150 sm:px-5 ${
+                        isSelected
+                          ? "bg-primary-25 dark:bg-primary-900/20"
+                          : "hover:bg-navy-25 dark:hover:bg-navy-750/60"
+                      }`}
+                    >
+                      <div
+                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                          a.isEmergency ? "bg-danger-50 text-danger-500 dark:bg-danger-900/30" : "bg-primary-50 text-primary-500 dark:bg-primary-900/30"
+                        }`}
+                      >
+                        <CalendarIcon className="h-5 w-5" />
                       </div>
-                      <div className="flex items-center gap-3 text-xs text-navy-400 dark:text-navy-500">
-                        {a.date && <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{fmtDate(new Date(a.date))} {a.time || ""}</span>}
-                        {a.reason && <span className="truncate">{a.reason}</span>}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className="truncate text-sm font-semibold text-navy-900 dark:text-navy-100">
+                            {a.patientName || "Unnamed"}
+                          </span>
+                          <Badge variant={a.status === "confirmed" ? "success" : a.status === "pending" ? "warning" : "danger"} size="sm">
+                            {a.status}
+                          </Badge>
+                          {a.isEmergency && (
+                            <Badge variant="danger" size="sm">Emergency</Badge>
+                          )}
+                        </div>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-navy-400 dark:text-navy-500">
+                          {a.date && (
+                            <span className="inline-flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              {fmtDate(new Date(a.date))}{a.time ? ` · ${a.time}` : ""}
+                            </span>
+                          )}
+                          {a.patientPhone && <span className="inline-flex items-center gap-1"><Phone className="h-3 w-3" />{a.patientPhone}</span>}
+                          {a.reason && <span className="truncate">{a.reason}</span>}
+                        </div>
                       </div>
+                      <button
+                        aria-label={`Delete appointment for ${a.patientName || "patient"}`}
+                        title="Delete appointment"
+                        onClick={(e) => { e.stopPropagation(); setDeleteError(null); setPendingDelete(a) }}
+                        className="shrink-0 rounded-lg p-1.5 text-navy-300 transition-colors hover:bg-danger-50 hover:text-danger-500 dark:text-navy-600 dark:hover:bg-danger-900/20 dark:hover:text-danger-400"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))
-          )}
-        </div>
+                  </li>
+                )
+              })}
+            </ul>
+          </Card>
+        )
       )}
 
       {selected && (
-        <Card>
+        <Card className="animate-fade-in">
           <CardHeader>
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-navy-900 dark:text-navy-100">Appointment Details</h2>
-              <button onClick={() => setSelected(null)} className="p-1 hover:bg-navy-50 dark:hover:bg-navy-750 rounded"><X className="h-4 w-4 text-navy-400 dark:text-navy-500" /></button>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <h2 className="truncate text-sm font-semibold text-navy-900 dark:text-navy-100">Appointment Details</h2>
+                <Badge variant={selected.status === "confirmed" ? "success" : selected.status === "pending" ? "warning" : "danger"} size="sm">
+                  {selected.status}
+                </Badge>
+              </div>
+              <button onClick={() => setSelected(null)} aria-label="Close details" className="rounded-lg p-1.5 text-navy-400 transition-colors hover:bg-navy-50 hover:text-navy-600 dark:text-navy-500 dark:hover:bg-navy-700 dark:hover:text-navy-300"><X className="h-4 w-4" /></button>
             </div>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-xl bg-navy-50/50 dark:bg-navy-750/50">
-                <div className="text-xs text-navy-400 dark:text-navy-500 mb-1 flex items-center gap-1"><User className="h-3 w-3" /> Patient</div>
-                <div className="text-sm font-medium text-navy-900 dark:text-navy-100">{selected.patientName || "N/A"}</div>
-              </div>
-              <div className="p-3 rounded-xl bg-navy-50/50 dark:bg-navy-750/50">
-                <div className="text-xs text-navy-400 dark:text-navy-500 mb-1 flex items-center gap-1"><Phone className="h-3 w-3" /> Phone</div>
-                <div className="text-sm text-navy-900 dark:text-navy-100">{selected.patientPhone || "N/A"}</div>
-              </div>
-            </div>
-            {selected.reason && (
-              <div className="p-3 rounded-xl bg-navy-50/50 dark:bg-navy-750/50">
-                <div className="text-xs text-navy-400 dark:text-navy-500 mb-1">Reason</div>
-                <div className="text-sm text-navy-700 dark:text-navy-300">{selected.reason}</div>
-              </div>
-            )}
-            {selected.providerName && (
-              <div className="p-3 rounded-xl bg-navy-50/50 dark:bg-navy-750/50">
-                <div className="text-xs text-navy-400 dark:text-navy-500 mb-1">Provider</div>
-                <div className="text-sm text-navy-700 dark:text-navy-300">{selected.providerName}</div>
-              </div>
-            )}
-            <div className="p-3 rounded-xl bg-navy-50/50 dark:bg-navy-750/50">
-              <div className="text-xs text-navy-400 dark:text-navy-500 mb-1">Created</div>
-              <div className="text-sm text-navy-700 dark:text-navy-300">{formatDateTime(selected.createdAt)}</div>
-            </div>
-            {selected.status !== "confirmed" && (
-              <Button onClick={() => updateStatus(selected.id, "confirmed")} className="w-full">
-                <CheckCircle className="h-4 w-4" /> Confirm Appointment
+          <CardContent className="space-y-2">
+            <dl className="divide-y divide-navy-75 rounded-xl border border-navy-100 dark:divide-navy-700/60 dark:border-navy-700">
+              <DetailRow icon={<User className="h-3.5 w-3.5" />} label="Patient" value={selected.patientName || "N/A"} strong />
+              <DetailRow icon={<Phone className="h-3.5 w-3.5" />} label="Phone" value={selected.patientPhone || "N/A"} />
+              <DetailRow icon={<Clock className="h-3.5 w-3.5" />} label="When" value={selected.date ? `${fmtDate(new Date(selected.date))}${selected.time ? ` · ${selected.time}` : ""}` : "N/A"} />
+              {selected.reason && <DetailRow label="Reason" value={selected.reason} />}
+              {selected.providerName && <DetailRow label="Provider" value={selected.providerName} />}
+              <DetailRow label="Created" value={formatDateTime(selected.createdAt)} muted />
+            </dl>
+            <div className="flex flex-col gap-2 pt-2 sm:flex-row">
+              {selected.status !== "confirmed" && (
+                <Button onClick={() => updateStatus(selected.id, "confirmed")} className="flex-1">
+                  <CheckCircle className="h-4 w-4" /> Confirm
+                </Button>
+              )}
+              {selected.status !== "cancelled" && (
+                <Button onClick={() => updateStatus(selected.id, "cancelled")} variant="secondary" className="flex-1">
+                  <XCircle className="h-4 w-4" /> Cancel
+                </Button>
+              )}
+              <Button
+                onClick={() => { setDeleteError(null); setPendingDelete(selected) }}
+                variant="danger"
+                className="flex-1"
+              >
+                <Trash2 className="h-4 w-4" /> Delete
               </Button>
-            )}
-            {selected.status !== "cancelled" && (
-              <Button onClick={() => updateStatus(selected.id, "cancelled")} variant="secondary" className="w-full">
-                <XCircle className="h-4 w-4" /> Cancel Appointment
-              </Button>
-            )}
-            <Button
-              onClick={() => { setDeleteError(null); setPendingDelete(selected) }}
-              variant="secondary"
-              className="w-full !text-red-500 hover:!bg-red-50 dark:hover:!bg-red-900/20"
-            >
-              <Trash2 className="h-4 w-4" /> Delete Appointment
-            </Button>
+            </div>
           </CardContent>
         </Card>
       )}
 
-      {pendingDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/50 p-4"
-          onClick={() => { if (!deleting) setPendingDelete(null) }}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Confirm appointment deletion"
-        >
-          <div
-            className="w-full max-w-sm rounded-2xl bg-white dark:bg-navy-800 p-6 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-3 mb-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-50 dark:bg-red-900/30">
-                <Trash2 className="h-5 w-5 text-red-500" />
-              </div>
-              <h2 className="text-base font-semibold text-navy-900 dark:text-navy-100">Delete appointment?</h2>
-            </div>
-            <p className="text-sm text-navy-500 dark:text-navy-400">
-              {pendingDelete.patientName || "This appointment"}
-              {pendingDelete.date ? ` on ${fmtDate(new Date(pendingDelete.date))}` : ""}
-              {pendingDelete.time ? ` at ${pendingDelete.time}` : ""} will be
-              removed from the dashboard. The record stays safe in the
-              database — nothing is permanently erased.
-            </p>
-            {deleteError && (
-              <p className="mt-3 text-sm text-red-500">{deleteError}</p>
-            )}
-            <div className="mt-5 flex gap-2">
-              <Button
-                variant="secondary"
-                className="flex-1"
-                onClick={() => setPendingDelete(null)}
-                disabled={deleting}
-              >
-                Cancel
-              </Button>
-              <Button
-                className="flex-1 !bg-red-500 hover:!bg-red-600"
-                onClick={confirmDelete}
-                disabled={deleting}
-              >
-                {deleting ? "Deleting…" : "Delete"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Modal
+        open={pendingDelete !== null}
+        onClose={() => { if (!deleting) setPendingDelete(null) }}
+        title="Delete appointment?"
+        description={
+          pendingDelete
+            ? `${pendingDelete.patientName || "This appointment"}${
+                pendingDelete.date ? ` on ${fmtDate(new Date(pendingDelete.date))}` : ""
+              }${
+                pendingDelete.time ? ` at ${pendingDelete.time}` : ""
+              } will be removed from the dashboard. The record stays safe in the database — nothing is permanently erased.`
+            : undefined
+        }
+        footer={
+          <>
+            <Button variant="secondary" className="flex-1" onClick={() => setPendingDelete(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="danger" className="flex-1" onClick={confirmDelete} loading={deleting}>
+              Delete
+            </Button>
+          </>
+        }
+      >
+        {deleteError && (
+          <p role="alert" className="text-sm font-medium text-danger-600 dark:text-danger-400">{deleteError}</p>
+        )}
+      </Modal>
+    </div>
+  )
+}
+
+function DetailRow({
+  icon,
+  label,
+  value,
+  strong,
+  muted,
+}: {
+  icon?: React.ReactNode
+  label: string
+  value: string
+  strong?: boolean
+  muted?: boolean
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 px-4 py-2.5">
+      <dt className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-navy-400 dark:text-navy-500">
+        {icon}
+        {label}
+      </dt>
+      <dd
+        className={`truncate text-right text-sm ${
+          strong
+            ? "font-semibold text-navy-900 dark:text-navy-100"
+            : muted
+              ? "text-navy-400 dark:text-navy-500"
+              : "text-navy-700 dark:text-navy-200"
+        }`}
+      >
+        {value}
+      </dd>
     </div>
   )
 }

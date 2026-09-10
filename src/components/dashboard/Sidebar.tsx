@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
@@ -21,28 +21,65 @@ import {
   BarChart3,
   Inbox,
   Link2,
+  X,
 } from "lucide-react"
 import { removeTokenCookie } from "@/lib/auth-client"
 
-const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/dashboard/inbox", label: "Inbox", icon: Inbox },
-  { href: "/dashboard/integrations", label: "Integrations", icon: Link2 },
-  { href: "/dashboard/leads", label: "Leads", icon: Users },
-  { href: "/dashboard/appointments", label: "Appointments", icon: CalendarCheck },
-  { href: "/dashboard/knowledge", label: "Knowledge Base", icon: BookOpen },
-  { href: "/dashboard/website-integration", label: "Integration", icon: Globe },
-  { href: "/dashboard/widget", label: "Widget", icon: Code2 },
-  { href: "/dashboard/usage", label: "AI Usage", icon: BarChart3 },
-  { href: "/dashboard/settings/ai-providers", label: "AI Providers", icon: Key },
-  { href: "/dashboard/billing", label: "Billing", icon: DollarSign },
-  { href: "/dashboard/settings", label: "Settings", icon: Settings },
+interface NavItem {
+  href: string
+  label: string
+  icon: typeof LayoutDashboard
+}
+
+interface NavSection {
+  caption: string
+  items: NavItem[]
+}
+
+const navSections: NavSection[] = [
+  {
+    caption: "Workspace",
+    items: [
+      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/dashboard/inbox", label: "Inbox", icon: Inbox },
+      { href: "/dashboard/appointments", label: "Appointments", icon: CalendarCheck },
+      { href: "/dashboard/leads", label: "Leads", icon: Users },
+    ],
+  },
+  {
+    caption: "Configure",
+    items: [
+      { href: "/dashboard/knowledge", label: "Knowledge Base", icon: BookOpen },
+      { href: "/dashboard/integrations", label: "Integrations", icon: Link2 },
+      { href: "/dashboard/website-integration", label: "Website", icon: Globe },
+      { href: "/dashboard/widget", label: "Widget", icon: Code2 },
+      { href: "/dashboard/usage", label: "AI Usage", icon: BarChart3 },
+      { href: "/dashboard/settings/ai-providers", label: "AI Providers", icon: Key },
+      { href: "/dashboard/billing", label: "Billing", icon: DollarSign },
+    ],
+  },
+  {
+    caption: "System",
+    items: [{ href: "/dashboard/settings", label: "Settings", icon: Settings }],
+  },
 ]
 
 export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
   const [collapsed, setCollapsed] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
+
+  // Desktop-only collapse; the sidebar is hidden off-canvas on mobile
+  // until explicitly opened (avoids covering content on load).
+  useEffect(() => {
+    if (window.innerWidth < 768) setCollapsed(true)
+  }, [])
+
+  // Close the mobile drawer on navigation.
+  useEffect(() => {
+    setMobileOpen(false)
+  }, [pathname])
 
   const handleLogout = async () => {
     try {
@@ -57,62 +94,108 @@ export function Sidebar() {
   return (
     <>
       <button
-        className="fixed top-4 left-4 z-50 md:hidden p-2 rounded-lg bg-white border border-navy-100 shadow-sm"
-        onClick={() => setCollapsed(!collapsed)}
-        aria-label="Toggle sidebar"
+        className="fixed left-4 top-4 z-50 rounded-xl border border-navy-100 bg-white p-2 shadow-card dark:border-navy-700 dark:bg-navy-800 md:hidden"
+        onClick={() => setMobileOpen(true)}
+        aria-label="Open navigation"
       >
-        <Menu className="h-5 w-5 text-navy-600" />
+        <Menu className="h-5 w-5 text-navy-600 dark:text-navy-300" />
       </button>
+
+      {/* Mobile scrim */}
+      <div
+        aria-hidden="true"
+        onClick={() => setMobileOpen(false)}
+        className={cn(
+          "fixed inset-0 z-40 bg-navy-900/50 transition-opacity duration-200 md:hidden",
+          mobileOpen ? "opacity-100" : "pointer-events-none opacity-0",
+        )}
+      />
 
       <aside
         className={cn(
-          "fixed md:sticky top-0 left-0 h-screen bg-navy-900 border-r border-navy-800/50 flex flex-col transition-all duration-300 ease-out-cubic z-40",
-          collapsed ? "-translate-x-full md:translate-x-0 md:w-[68px]" : "translate-x-0 w-[240px]",
+          "fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-navy-800/50 bg-navy-900 transition-all duration-200 ease-out-cubic",
+          "md:sticky",
+          mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+          collapsed ? "w-[240px] md:w-[68px]" : "w-[240px]",
         )}
       >
-        <div className="flex items-center gap-3 px-4 h-14 border-b border-navy-800/50">
-          <Link href="/" className="flex items-center gap-2.5">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary-500">
+        <div className="flex h-14 items-center gap-3 border-b border-navy-800/50 px-4">
+          <Link href="/" className="flex min-w-0 items-center gap-2.5" aria-label="Clinot home">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary-500">
               <Bot className="h-4 w-4 text-white" />
             </div>
             {!collapsed && (
-              <span className="text-sm font-semibold text-white tracking-tight">Clinot</span>
+              <span className="truncate text-sm font-semibold tracking-tight text-white">Clinot</span>
             )}
           </Link>
-          <button
-            onClick={() => setCollapsed(!collapsed)}
-            className="hidden md:flex ml-auto p-1 rounded-md hover:bg-navy-800 text-navy-500 hover:text-navy-300 transition-colors"
-            aria-label="Toggle sidebar collapse"
-          >
-            <ChevronLeft className={cn("h-3.5 w-3.5 transition-transform duration-200", collapsed && "rotate-180")} />
-          </button>
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              onClick={() => setMobileOpen(false)}
+              className="rounded-md p-1 text-navy-500 transition-colors hover:bg-navy-800 hover:text-navy-300 md:hidden"
+              aria-label="Close navigation"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setCollapsed(!collapsed)}
+              className="hidden rounded-md p-1 text-navy-500 transition-colors hover:bg-navy-800 hover:text-navy-300 md:flex"
+              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              <ChevronLeft className={cn("h-3.5 w-3.5 transition-transform duration-200", collapsed && "rotate-180")} />
+            </button>
+          </div>
         </div>
 
-        <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto scrollbar-hide">
-          {navItems.map((item) => {
-            const isActive = pathname === item.href
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-150",
-                  isActive
-                    ? "bg-primary-500/10 text-primary-400 font-medium"
-                    : "text-navy-400 hover:text-navy-200 hover:bg-navy-800/50 font-medium",
-                )}
-              >
-                <item.icon className="h-4 w-4 shrink-0" />
-                {!collapsed && <span>{item.label}</span>}
-              </Link>
-            )
-          })}
+        <nav className="scrollbar-hide flex-1 space-y-5 overflow-y-auto px-2 py-4">
+          {navSections.map((section) => (
+            <div key={section.caption}>
+              {!collapsed && (
+                <p className="mb-1.5 px-3 text-2xs font-semibold uppercase tracking-wider text-navy-500">
+                  {section.caption}
+                </p>
+              )}
+              <div className="space-y-0.5">
+                {section.items.map((item) => {
+                  const isActive = pathname === item.href
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      title={collapsed ? item.label : undefined}
+                      aria-current={isActive ? "page" : undefined}
+                      className={cn(
+                        "relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors duration-150",
+                        collapsed && "justify-center px-0",
+                        isActive
+                          ? "bg-primary-500/10 font-medium text-primary-400"
+                          : "font-medium text-navy-400 hover:bg-navy-800/50 hover:text-navy-200",
+                      )}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-primary-400 transition-opacity",
+                          isActive ? "opacity-100" : "opacity-0",
+                        )}
+                      />
+                      <item.icon className="h-4 w-4 shrink-0" />
+                      {!collapsed && <span className="truncate">{item.label}</span>}
+                    </Link>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
 
-        <div className="p-2 border-t border-navy-800/50">
+        <div className="border-t border-navy-800/50 p-2">
           <button
             onClick={handleLogout}
-            className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-navy-500 hover:text-danger-400 hover:bg-navy-800/50 w-full transition-all duration-150"
+            title={collapsed ? "Sign Out" : undefined}
+            className={cn(
+              "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-navy-500 transition-colors duration-150 hover:bg-navy-800/50 hover:text-danger-400",
+              collapsed && "justify-center px-0",
+            )}
           >
             <LogOut className="h-4 w-4 shrink-0" />
             {!collapsed && <span>Sign Out</span>}
