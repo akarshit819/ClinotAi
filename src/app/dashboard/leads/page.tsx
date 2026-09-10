@@ -1,9 +1,11 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Card, CardHeader, CardContent } from "@/components/ui/Card"
+import { Card, CardContent } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
 import { Badge } from "@/components/ui/Badge"
+import { PageHeader } from "@/components/ui/PageHeader"
+import { EmptyState } from "@/components/ui/EmptyState"
 import { Users, Loader2, Mail, Phone, Search, X, Download, ArrowUpDown, CalendarCheck, XCircle, PhoneCall } from "lucide-react"
 import { formatDateTime } from "@/lib/utils"
 import { apiFetch } from "@/lib/client-auth"
@@ -88,15 +90,15 @@ export default function LeadsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-navy-900 dark:text-navy-100">Leads</h1>
-          <p className="text-sm text-navy-400 dark:text-navy-400 mt-1">{leads.length} total leads captured</p>
-        </div>
-        <Button size="sm" variant="secondary" onClick={exportCSV}>
-          <Download className="h-4 w-4" /> Export CSV
-        </Button>
-      </div>
+      <PageHeader
+        title="Leads"
+        description={`${leads.length} total lead${leads.length === 1 ? "" : "s"} captured`}
+        actions={
+          <Button size="sm" variant="secondary" onClick={exportCSV}>
+            <Download className="h-4 w-4" /> Export CSV
+          </Button>
+        }
+      />
 
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
@@ -111,13 +113,7 @@ export default function LeadsPage() {
       </div>
 
       {filtered.length === 0 ? (
-        <Card>
-          <CardContent className="text-center py-12">
-          <Users className="h-12 w-12 mx-auto mb-3 text-navy-300 dark:text-navy-600" />
-          <p className="text-navy-500 dark:text-navy-400 font-medium">No leads found</p>
-          <p className="text-sm text-navy-400 dark:text-navy-500 mt-1">{search ? "Try a different search" : "Leads will appear here when visitors leave contact info"}</p>
-          </CardContent>
-        </Card>
+        <EmptyState icon={Users} title="No leads found" description={search ? "Try a different search term." : "Leads will appear here when visitors leave contact info."} />
       ) : (
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filtered.map((lead) => (

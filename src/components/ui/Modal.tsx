@@ -38,7 +38,7 @@ export function Modal({ open, onClose, title, description, children, footer, lab
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/50 p-4 animate-fade-in"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/50 p-4 backdrop-blur-sm animate-fade-in"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -46,8 +46,8 @@ export function Modal({ open, onClose, title, description, children, footer, lab
     >
       <div
         className={cn(
-          "w-full max-w-sm rounded-2xl border border-navy-100 bg-white p-6 shadow-dialog",
-          "dark:border-navy-700 dark:bg-navy-800 animate-scale-in",
+          "w-full max-w-sm rounded-2xl border border-white/40 bg-white/85 p-6 shadow-dialog backdrop-blur-xl",
+          "dark:border-white/10 dark:bg-navy-800/85 animate-scale-in",
         )}
         onClick={(e) => e.stopPropagation()}
       >

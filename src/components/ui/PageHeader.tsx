@@ -13,7 +13,7 @@ interface PageHeaderProps {
  */
 export function PageHeader({ title, description, actions, className }: PageHeaderProps) {
   return (
-    <div className={cn("animate-fade-in", className)}>
+    <div className={cn("animate-fade-in-up", className)}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h1 className="text-xl font-bold tracking-tight text-navy-900 dark:text-navy-100">

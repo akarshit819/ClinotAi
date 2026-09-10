@@ -48,6 +48,31 @@
 }
 
 @layer components {
+  /* ---- Clinot depth system: glass is strategic, never everywhere ---- */
+  .surface-glass {
+    @apply border border-white/40 bg-white/70 backdrop-blur-xl;
+  }
+
+  .dark .surface-glass {
+    @apply border-white/10 bg-navy-900/70;
+  }
+
+  .surface-elevated {
+    @apply border border-navy-100/80 bg-white shadow-card;
+  }
+
+  .dark .surface-elevated {
+    @apply border-navy-700/80 bg-navy-800 shadow-none;
+  }
+
+  .surface-sunken {
+    @apply border border-navy-100/60 bg-navy-25;
+  }
+
+  .dark .surface-sunken {
+    @apply border-navy-700/60 bg-navy-750;
+  }
+
   .input-field {
     @apply w-full rounded-xl border border-navy-200 bg-white px-4 py-2.5 text-sm text-navy-900 placeholder:text-navy-300 transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500;
   }
@@ -104,6 +129,65 @@
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+
+  /* ---- Ambient environment: near-static light fields (transform-only) ---- */
+  .ambient-orb {
+    position: absolute;
+    border-radius: 9999px;
+    pointer-events: none;
+    will-change: transform;
+  }
+
+  .ambient-drift {
+    animation: ambientDrift 26s ease-in-out infinite alternate;
+  }
+
+  @keyframes ambientDrift {
+    from { transform: translate3d(0, 0, 0) scale(1); }
+    to { transform: translate3d(4%, -6%, 0) scale(1.06); }
+  }
+
+  /* ---- Clinot signature: quiet AI presence (opacity-only pulse) ---- */
+  .ai-presence {
+    position: relative;
+  }
+
+  .ai-presence::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 9999px;
+    background: radial-gradient(circle, rgb(36 99 235 / 0.35) 0%, transparent 70%);
+    opacity: 0.5;
+    animation: aiBreathe 3.2s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  @keyframes aiBreathe {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 0.8; }
+  }
+
+  .ai-flow-bar {
+    background: linear-gradient(90deg, rgb(36 99 235 / 0) 0%, rgb(36 99 235 / 0.9) 50%, rgb(36 99 235 / 0) 100%);
+    animation: aiFlow 1.6s ease-in-out infinite;
+  }
+
+  @keyframes aiFlow {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+
+  /* ---- Dropdown / popover entrances (transform + opacity only) ---- */
+  .animate-dropdown {
+    animation: dropdownIn 0.18s cubic-bezier(0.33, 1, 0.68, 1);
+    transform-origin: top center;
+  }
+
+  @keyframes dropdownIn {
+    from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
   }
 
   .scrollbar-hide {

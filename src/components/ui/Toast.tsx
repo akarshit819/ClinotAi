@@ -50,7 +50,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={t.id}
             className={cn(
-              "flex items-start gap-3 px-4 py-3 rounded-xl shadow-strong border backdrop-blur-sm animate-fade-up",
+              "flex items-start gap-3 px-4 py-3 rounded-xl shadow-strong border backdrop-blur-md animate-fade-in-up",
               {
                 "bg-emerald-50 dark:bg-emerald-900/40 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200": t.type === "success",
                 "bg-red-50 dark:bg-red-900/40 border-red-200 dark:border-red-800 text-red-900 dark:text-red-200": t.type === "error",

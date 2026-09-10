@@ -24,6 +24,7 @@ import {
   X,
 } from "lucide-react"
 import { removeTokenCookie } from "@/lib/auth-client"
+import { AiPresence } from "@/components/ui/AiPresence"
 
 interface NavItem {
   href: string
@@ -113,7 +114,7 @@ export function Sidebar() {
 
       <aside
         className={cn(
-          "fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-navy-800/50 bg-navy-900 transition-all duration-200 ease-out-cubic",
+          "fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-white/10 bg-navy-900/85 backdrop-blur-xl transition-all duration-200 ease-out-cubic",
           "md:sticky",
           mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
           collapsed ? "w-[240px] md:w-[68px]" : "w-[240px]",
@@ -174,8 +175,8 @@ export function Sidebar() {
                       <span
                         aria-hidden="true"
                         className={cn(
-                          "absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-primary-400 transition-opacity",
-                          isActive ? "opacity-100" : "opacity-0",
+                          "absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-primary-400 transition-all duration-200",
+                          isActive ? "opacity-100 shadow-glow" : "opacity-0",
                         )}
                       />
                       <item.icon className="h-4 w-4 shrink-0" />
@@ -189,6 +190,11 @@ export function Sidebar() {
         </nav>
 
         <div className="border-t border-navy-800/50 p-2">
+          {!collapsed && (
+            <div className="mb-1.5 flex items-center gap-2 rounded-lg px-3 py-1.5">
+              <AiPresence label="AI receptionist live" />
+            </div>
+          )}
           <button
             onClick={handleLogout}
             title={collapsed ? "Sign Out" : undefined}

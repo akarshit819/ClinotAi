@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/Badge"
 import { PageHeader } from "@/components/ui/PageHeader"
 import { EmptyState } from "@/components/ui/EmptyState"
 import { Modal } from "@/components/ui/Modal"
+import { AiPresence } from "@/components/ui/AiPresence"
 import { Calendar as CalendarIcon, Loader2, ChevronLeft, ChevronRight, Clock, User, Phone, X, CheckCircle, XCircle, Trash2 } from "lucide-react"
 import { formatDateTime } from "@/lib/utils"
 import { apiFetch } from "@/lib/client-auth"
@@ -113,13 +114,35 @@ export default function AppointmentsPage() {
       .finally(() => setLoading(false))
   }, [])
 
+  // Elegant confirmation when Clinot notifies the patient about a
+  // dashboard cancellation (surfaced from PATCH `notification.sent`).
+  const [cancelNoticeId, setCancelNoticeId] = useState<string | null>(null)
+
+  useEffect(() => {
+    setCancelNoticeId(null)
+  }, [selected?.id])
+
   const updateStatus = async (id: string, status: string) => {
-    await apiFetch("/api/appointments", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, status }),
-    })
-    setAppointments((prev) => prev.map((a) => (a.id === id ? { ...a, status } : a)))
+    try {
+      const res = await apiFetch("/api/appointments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        throw new Error((data && data.error) || `Update failed (${res.status})`)
+      }
+      setAppointments((prev) => prev.map((a) => (a.id === id ? { ...a, status } : a)))
+      setSelected((prev) => (prev?.id === id ? { ...prev, status } : prev))
+      if (status === "cancelled" && data?.notification?.sent) {
+        setCancelNoticeId(id)
+      } else {
+        setCancelNoticeId(null)
+      }
+    } catch (err: unknown) {
+      console.error("[dashboard/appointments] status update failed:", err instanceof Error ? err.message : err)
+    }
   }
 
   const weekDays: Date[] = []
@@ -320,6 +343,15 @@ export default function AppointmentsPage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-2">
+            {cancelNoticeId === selected.id && (
+              <div className="flex items-center gap-2.5 rounded-xl border border-success-200 bg-success-50 px-4 py-3 dark:border-success-800 dark:bg-success-900/20 animate-fade-in" role="status">
+                <CheckCircle className="h-4 w-4 shrink-0 text-success-600 dark:text-success-400" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-success-700 dark:text-success-300">Patient notified via WhatsApp</p>
+                  <div className="mt-0.5"><AiPresence label="Sent by Clinot AI" /></div>
+                </div>
+              </div>
+            )}
             <dl className="divide-y divide-navy-75 rounded-xl border border-navy-100 dark:divide-navy-700/60 dark:border-navy-700">
               <DetailRow icon={<User className="h-3.5 w-3.5" />} label="Patient" value={selected.patientName || "N/A"} strong />
               <DetailRow icon={<Phone className="h-3.5 w-3.5" />} label="Phone" value={selected.patientPhone || "N/A"} />

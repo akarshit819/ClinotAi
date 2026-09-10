@@ -4,6 +4,9 @@ import { useState, useEffect } from "react"
 import { Card, CardHeader, CardContent } from "@/components/ui/Card"
 import { Button } from "@/components/ui/Button"
 import { Badge } from "@/components/ui/Badge"
+import { PageHeader } from "@/components/ui/PageHeader"
+import { EmptyState } from "@/components/ui/EmptyState"
+import { FormField, TextInput, TextArea } from "@/components/ui/FormField"
 import { BookOpen, Loader2, Search, X, Plus, Eye, Globe, Trash2, Edit3 } from "lucide-react"
 import { formatDateTime } from "@/lib/utils"
 import { apiFetch } from "@/lib/client-auth"
@@ -83,24 +86,24 @@ export default function KnowledgePage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-navy-900 dark:text-navy-100">Knowledge Base</h1>
-          <p className="text-sm text-navy-400 dark:text-navy-400 mt-1">{items.length} entries</p>
-        </div>
-        <Button size="sm" onClick={() => setShowAdd(!showAdd)}>
-          <Plus className="h-4 w-4" /> Add Entry
-        </Button>
-      </div>
+      <PageHeader
+        title="Knowledge Base"
+        description={`${items.length} ${items.length === 1 ? "entry" : "entries"} powering Clinot's answers`}
+        actions={
+          <Button size="sm" onClick={() => setShowAdd(!showAdd)}>
+            <Plus className="h-4 w-4" /> Add Entry
+          </Button>
+        }
+      />
 
       {showAdd && (
-        <Card>
-          <CardHeader><h2 className="text-sm font-semibold text-navy-900 dark:text-navy-100">New Entry</h2></CardHeader>
+        <Card className="animate-fade-in">
+          <CardHeader><h2 className="text-sm font-semibold tracking-tight text-navy-900 dark:text-navy-100">New Entry</h2></CardHeader>
           <CardContent className="space-y-3">
-            <input type="text" placeholder="Question" value={addForm.question} onChange={(e) => setAddForm({ ...addForm, question: e.target.value })} className="input-field" />
-            <textarea placeholder="Answer" value={addForm.answer} onChange={(e) => setAddForm({ ...addForm, answer: e.target.value })} className="input-field min-h-[100px]" />
-            <input type="text" placeholder="Category (optional)" value={addForm.category} onChange={(e) => setAddForm({ ...addForm, category: e.target.value })} className="input-field" />
-            <div className="flex gap-2">
+            <FormField label="Question" required>{(id) => <TextInput id={id} placeholder="e.g. Do you offer teeth whitening?" value={addForm.question} onChange={(e) => setAddForm({ ...addForm, question: e.target.value })} />}</FormField>
+            <FormField label="Answer" required>{(id) => <TextArea id={id} placeholder="Clinot will answer with this text…" value={addForm.answer} onChange={(e) => setAddForm({ ...addForm, answer: e.target.value })} />}</FormField>
+            <FormField label="Category">{(id) => <TextInput id={id} placeholder="General, Pricing, Hours…" value={addForm.category} onChange={(e) => setAddForm({ ...addForm, category: e.target.value })} />}</FormField>
+            <div className="flex gap-2 pt-1">
               <Button onClick={addItem} disabled={!addForm.question || !addForm.answer}>Save</Button>
               <Button variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Button>
             </div>
@@ -121,12 +124,7 @@ export default function KnowledgePage() {
       </div>
 
       {filtered.length === 0 ? (
-        <Card>
-          <CardContent className="text-center py-12">
-          <BookOpen className="h-12 w-12 mx-auto mb-3 text-navy-300 dark:text-navy-600" />
-          <p className="text-navy-500 dark:text-navy-400 font-medium">No entries found</p>
-          </CardContent>
-        </Card>
+        <EmptyState icon={BookOpen} title="No entries found" description={search ? "Try a different search or category." : "Add your first entry to teach Clinot about your clinic."} />
       ) : (
         <div className="space-y-3">
           {filtered.map((item) => (

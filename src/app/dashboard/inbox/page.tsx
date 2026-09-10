@@ -313,7 +313,7 @@ export default function InboxPage() {
                     onClick={() => handleSelectConversation(conv.id)}
                     className={cn(
                       "w-full text-left p-4 transition-colors hover:bg-navy-25 dark:hover:bg-navy-800",
-                      isSelected && "bg-primary-25 hover:bg-primary-25 dark:bg-primary-900/20 dark:hover:bg-primary-900/20",
+                      isSelected && "bg-primary-25 ring-1 ring-inset ring-primary-500/25 hover:bg-primary-25 dark:bg-primary-900/20 dark:hover:bg-primary-900/20",
                       conv.isEmergency && "bg-danger-50 hover:bg-danger-50 dark:bg-danger-900/20",
                     )}
                   >
@@ -460,11 +460,11 @@ export default function InboxPage() {
                       {!isUser && (
                         <div className="flex items-center gap-1.5 mb-1">
                           {isAi ? (
-                            <Bot className="h-3 w-3 text-navy-400" />
+                            <span className="ai-presence inline-flex h-1.5 w-1.5 rounded-full bg-primary-500" aria-hidden="true" />
                           ) : (
                             <User className="h-3 w-3 text-navy-400" />
                           )}
-                          <span className="text-2xs font-medium text-navy-400">
+                          <span className="text-2xs font-medium text-navy-400 dark:text-navy-500">
                             {isAi ? "Clinot AI" : "Clinic Staff"}
                           </span>
                         </div>

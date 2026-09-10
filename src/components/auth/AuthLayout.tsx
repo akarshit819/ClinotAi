@@ -1,4 +1,5 @@
 import { Bot } from "lucide-react"
+import { AppBackdrop } from "@/components/ui/AppBackdrop"
 
 interface AuthLayoutProps {
   eyebrow: string
@@ -12,8 +13,9 @@ interface AuthLayoutProps {
  */
 export function AuthLayout({ eyebrow, title, children }: AuthLayoutProps) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-navy-50 via-white to-navy-25 p-4 dark:from-navy-950 dark:via-navy-900 dark:to-navy-950">
-      <div className="w-full max-w-sm animate-fade-in-up">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-gray-25 p-4 dark:bg-navy-950">
+      <AppBackdrop variant="auth" />
+      <div className="relative w-full max-w-sm animate-fade-in-up">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-primary-500 shadow-glow">
             <Bot className="h-5 w-5 text-white" />
