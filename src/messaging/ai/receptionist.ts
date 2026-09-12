@@ -166,6 +166,23 @@ export async function runAiReceptionist(
   const decision = classifyRoute(message.content, existingDraft)
   logRouteDecision(decision, context.conversation.id, context.clinicId)
 
+  // Typo-tolerant routing observability: explains WHY a misspelled
+  // message (e.g. "headche") routed as HEALTH_RECEPTIONIST without
+  // logging message content or secrets.
+  if (decision.typoMatch?.matched) {
+    logger.info("[CLINOT_DOMAIN_TYPO_MATCH]", {
+      conversationId: context.conversation.id,
+      clinicId: context.clinicId,
+      route: decision.route,
+      matchType: decision.typoMatch.matchType,
+      token: decision.typoMatch.token,
+      vocabWord: decision.typoMatch.vocabWord,
+      distance: decision.typoMatch.distance,
+      confidence: decision.typoMatch.confidence,
+      normalized: true,
+    })
+  }
+
   // ========================================================================
   // LEVEL 1: EMERGENCY
   // ========================================================================

@@ -187,6 +187,202 @@ function matchesAny(patterns: RegExp[], text: string): boolean {
   return patterns.some((re) => re.test(text))
 }
 
+// === Normalization (routing/classification ONLY) ==========================
+// The persisted user message is NEVER mutated — callers classify the
+// normalized copy and store/reply with the original text.
+//
+// Conservative by design: lowercase, collapse whitespace, replace
+// punctuation with spaces (so "headache!!!" and "head,pain" still
+// tokenize), collapse runs of 3+ repeated characters ("headaaache"
+// → "headache"). Two-letter doubles ("headachee") are left alone —
+// the edit-distance matcher below handles those.
+
+export function normalizeClinotText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/(.)\1{2,}/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+// === Capped Levenshtein distance ==========================================
+// Tiny dependency-free edit distance with an early-exit cap: we only
+// ever care whether the distance is ≤ 2, so the DP short-circuits
+// past that. Runs per incoming message over a small token ×
+// vocabulary product — negligible cost, no network, no AI.
+
+export function levenshteinDistance(a: string, b: string, cap = 2): number {
+  if (a === b) return 0
+  const lenDiff = Math.abs(a.length - b.length)
+  if (lenDiff > cap) return cap + 1
+  let prev: number[] = Array.from({ length: b.length + 1 }, (_, j) => j)
+  for (let i = 1; i <= a.length; i++) {
+    let curr: number[] = [i]
+    let rowMin = i
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      const v = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
+      curr.push(v)
+      if (v < rowMin) rowMin = v
+    }
+    if (rowMin > cap) return cap + 1
+    prev = curr
+  }
+  return prev[b.length]
+}
+
+// === Allowlist-supporting clinical vocabulary =============================
+// General symptom/body vocabulary for routing ONLY — it never
+// diagnoses. Presence (exact or typo-tolerant, see below) decides
+// whether a message belongs to the allowed health/receptionist
+// domain; the existing medical-safety pipeline then handles it.
+
+// Complaint tokens: on their own these already indicate a symptom
+// report, even without framing ("head pain", "fever").
+// (Arrays: the TS target forbids Set iteration, so exact lookup uses
+// a companion Set while iteration uses indexed loops.)
+const COMPLAINT_WORDS: readonly string[] = [
+  "headache", "headaches", "migraine", "migraines",
+  "toothache", "backache", "stomachache", "earache",
+  "pain", "pains", "ache", "aches",
+  "hurt", "hurts", "hurting",
+  "sore", "paining",
+  "swelling", "swollen",
+  "fever", "cough", "cold", "flu",
+  "nausea", "nauseous", "vomit", "vomiting",
+  "dizzy", "dizziness", "bleeding", "bleed",
+  "diarrhea", "cramp", "cramps",
+  "itch", "itching", "rash",
+  "numb", "numbness", "stiff", "stiffness",
+  "discomfort", "injury", "injured",
+  "sick", "unwell", "ill",
+]
+const COMPLAINT_VOCAB: ReadonlySet<string> = new Set(COMPLAINT_WORDS)
+
+// Body-part tokens: meaningful only WITH a complaint token or with
+// symptom framing ("i have …", "my …").
+const BODY_WORDS: readonly string[] = [
+  "head", "tooth", "teeth", "gum", "gums", "jaw",
+  "neck", "back", "shoulder", "elbow", "wrist",
+  "hand", "hands", "finger", "fingers",
+  "hip", "leg", "legs", "knee", "knees",
+  "ankle", "foot", "feet", "toe", "toes",
+  "chest", "stomach", "throat", "ear", "ears",
+  "eye", "eyes", "nose", "mouth", "tongue", "skin",
+]
+const BODY_VOCAB: ReadonlySet<string> = new Set(BODY_WORDS)
+
+// Symptom framing: first-person complaint structure. A fuzzy token
+// match only counts when this framing (or a body+complaint pairing)
+// is present — this is what stops random words ("rain" ≈ "pain",
+// "bake" ≈ "back") from becoming health requests.
+const FRAMING_PATTERN =
+  /\b(i\s+have|i've(\s+got)?|i\s+am|i'm|my|suffering\s+from|feeling|feel)\b/
+
+export interface TypoHealthSignal {
+  matched: boolean
+  /** 1 = exact vocabulary hit, ~0.85 = typo + framing, 0 = no signal. */
+  confidence: number
+  matchType: "exact" | "typo_framed" | "none"
+  token?: string
+  vocabWord?: string
+  distance?: number
+}
+
+function maxTypoDistance(tokenLength: number): number {
+  return tokenLength <= 4 ? 1 : 2
+}
+
+/**
+ * Typo-tolerant clinical-intent detection (deterministic, general —
+ * NOT hardcoded to any single symptom spelling).
+ *
+ * Rules (conservative, fail-closed):
+ *   1. An EXACT complaint token anywhere → health (confidence 1).
+ *      ("head pain", "fever", "i have very headache …")
+ *   2. Otherwise, a token within a small edit distance of a
+ *      vocabulary word counts ONLY with symptom framing
+ *      ("i have heache": heache ~ headache d=2 + "i have").
+ *      (confidence 0.85)
+ *   3. Anything else → no signal. Random words stay outside even
+ *      when vaguely similar ("rain" ~ "pain" has no framing).
+ *
+ * Tokens shorter than 4 chars are never fuzzy-matched.
+ */
+export function fuzzyHealthSignal(rawText: string): TypoHealthSignal {
+  const normalized = normalizeClinotText(rawText)
+  if (!normalized) return { matched: false, confidence: 0, matchType: "none" }
+  const tokens = normalized.split(" ").filter((t) => t.length >= 2)
+  if (tokens.length === 0) return { matched: false, confidence: 0, matchType: "none" }
+
+  // Dedup without Set iteration (TS target forbids it).
+  const uniqueTokens = tokens.filter((t, i) => tokens.indexOf(t) === i)
+
+  const tokenSet = new Set(tokens)
+
+  // Rule 1: exact complaint vocabulary hit.
+  for (let i = 0; i < uniqueTokens.length; i++) {
+    const token = uniqueTokens[i]
+    if (COMPLAINT_VOCAB.has(token)) {
+      return { matched: true, confidence: 1, matchType: "exact", token, vocabWord: token, distance: 0 }
+    }
+  }
+
+  // Rules 2+: framing-gated fuzzy matching.
+  const framed = FRAMING_PATTERN.test(normalized)
+  if (!framed) return { matched: false, confidence: 0, matchType: "none" }
+
+  // Exact body token + framing ("my head", "head pain" without the
+  // complaint word, "mera head pain" style fragments).
+  for (let i = 0; i < uniqueTokens.length; i++) {
+    const token = uniqueTokens[i]
+    if (BODY_VOCAB.has(token)) {
+      return { matched: true, confidence: 0.9, matchType: "exact", token, vocabWord: token, distance: 0 }
+    }
+  }
+
+  // Fuzzy pass over the union vocabulary.
+  const vocabLists = [COMPLAINT_WORDS, BODY_WORDS]
+  let best: { token: string; vocabWord: string; distance: number } | null = null
+  for (let i = 0; i < uniqueTokens.length; i++) {
+    const token = uniqueTokens[i]
+    if (token.length < 4) continue
+    const cap = maxTypoDistance(token.length)
+    for (let v = 0; v < vocabLists.length; v++) {
+      const vocab = vocabLists[v]
+      for (let w = 0; w < vocab.length; w++) {
+        const word = vocab[w]
+        if (Math.abs(word.length - token.length) > cap) continue
+        const d = levenshteinDistance(token, word, cap)
+        if (d > cap) continue
+        // Ratio guard: the typo must be small relative to the word
+        // ("bake" ~ "back" d=2 on len 4 is too far).
+        if (d * 3 > token.length) continue
+        if (!best || d < best.distance) {
+          best = { token, vocabWord: word, distance: d }
+        }
+      }
+    }
+  }
+  if (best) {
+    return {
+      matched: true,
+      confidence: 0.85,
+      matchType: "typo_framed",
+      token: best.token,
+      vocabWord: best.vocabWord,
+      distance: best.distance,
+    }
+  }
+  return { matched: false, confidence: 0, matchType: "none" }
+}
+
+/** Boolean form for allowlist checks. */
+export function isTypoTolerantHealthText(rawText: string): boolean {
+  return fuzzyHealthSignal(rawText).matched
+}
+
 /**
  * TEXT-ONLY positive allowlist check.
  *
@@ -208,6 +404,9 @@ export function isClinotAllowedText(text: string): boolean {
   if (matchesAny(DOCTOR_PATTERNS, trimmed)) return true
   if (matchesAny(SERVICE_PATTERNS, trimmed)) return true
   if (matchesAny(HEALTH_PATTERNS, trimmed)) return true
+  // Typo-tolerant clinical intent (fail-closed fuzzy layer — see
+  // fuzzyHealthSignal for the framing-gated rules).
+  if (isTypoTolerantHealthText(trimmed)) return true
   return false
 }
 
@@ -231,5 +430,8 @@ export function classifyClinotDomainText(text: string): ClinotDomainDecision {
     return { allowed: true, domain: "clinic_service", reason: "service_vocabulary" }
   if (matchesAny(HEALTH_PATTERNS, trimmed))
     return { allowed: true, domain: "health_receptionist", reason: "health_receptionist_vocabulary" }
+  const typoSignal = fuzzyHealthSignal(trimmed)
+  if (typoSignal.matched)
+    return { allowed: true, domain: "health_receptionist", reason: "health_typo_tolerant_match" }
   return { allowed: false, domain: "outside", reason: "outside_clinot_domain" }
 }

@@ -38,7 +38,11 @@ import {
   type ExpectedField,
 } from "./appointment-state"
 import { logger } from "@/lib/logger"
-import { isClinotAllowedText } from "@/lib/ai/clinot-domain"
+import {
+  isClinotAllowedText,
+  fuzzyHealthSignal,
+  type TypoHealthSignal,
+} from "@/lib/ai/clinot-domain"
 
 export type Route =
   | "EMERGENCY"
@@ -65,6 +69,12 @@ export interface RouteDecision {
   slotAnswerCandidate: boolean
   /** Human-readable reason for the routing decision. */
   reason: string
+  /**
+   * Present when the route came from the typo-tolerant health
+   * matcher — lets the receptionist log WHY (token, vocabulary
+   * word, distance, confidence) without touching message content.
+   */
+  typoMatch?: TypoHealthSignal
 }
 
 // === Location / hours / contact patterns ================================
@@ -318,6 +328,21 @@ export function classifyRoute(
     }
   }
 
+  // Typo-tolerant clinical intent ("i have headche"): the deterministic
+  // fuzzy matcher found a symptom/body token with symptom framing.
+  // Routes into the EXISTING medical-safety pipeline — no diagnosis
+  // happens here. Detail rides along for observability.
+  const typoSignal = fuzzyHealthSignal(text)
+  if (typoSignal.matched) {
+    return {
+      route: "MEDICAL_SYMPTOM",
+      expectedField: null,
+      slotAnswerCandidate: false,
+      reason: "symptom_typo_tolerant_match",
+      typoMatch: typoSignal,
+    }
+  }
+
   // LEVEL 5b: STRICT POSITIVE ALLOWLIST — checked after all
   // explicitly allowed clinic routes but before GENERAL. Anything
   // that does not belong to Clinot's product universe is OUTSIDE:
@@ -348,6 +373,12 @@ function classifyInterruption(text: string): Route | null {
     return "INSURANCE"
   }
   if (matchesAny(SYMPTOM_PATTERNS, text)) {
+    return "MEDICAL_SYMPTOM"
+  }
+  // Typo-tolerant health side question during a draft ("i have
+  // heache"): answered via the safe health pipeline with the draft
+  // preserved — never mistaken for a slot answer or outside-domain.
+  if (fuzzyHealthSignal(text).matched) {
     return "MEDICAL_SYMPTOM"
   }
   return null
