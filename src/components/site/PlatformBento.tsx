@@ -2,7 +2,8 @@
 
 import { useRef, type MouseEvent } from "react"
 import Link from "next/link"
-import { Bot, CalendarCheck, MessageSquare, MessageCircle, LayoutDashboard, ArrowRight, CheckCircle2 } from "lucide-react"
+import { CalendarCheck, MessageSquare, MessageCircle, LayoutDashboard, ArrowRight, CheckCircle2 } from "lucide-react"
+import { ClinotLogo } from "@/components/brand/ClinotLogo"
 import { SectionHeader } from "./SectionHeader"
 import { Reveal } from "./Reveal"
 
@@ -45,9 +46,9 @@ export function PlatformBento() {
               aria-label="AI Receptionist — learn more"
             >
               <span className="flex-1">
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 text-white shadow-glow mb-4 transition-transform duration-200 group-hover:scale-105">
-                  <Bot className="h-5 w-5" />
-                </span>
+              <span className="mb-4 inline-flex transition-transform duration-200 group-hover:scale-105">
+                <ClinotLogo size={40} className="rounded-xl shadow-glow" />
+              </span>
                 <span className="block text-lg font-semibold text-navy-900 mb-1.5">AI Receptionist</span>
                 <span className="block text-sm text-navy-400 leading-relaxed mb-4">
                   Answers routine patient questions instantly from your approved clinic knowledge — with

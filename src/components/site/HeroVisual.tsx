@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { Bot, CalendarCheck, CheckCircle2, LayoutDashboard } from "lucide-react"
+import { CalendarCheck, CheckCircle2, LayoutDashboard } from "lucide-react"
+import { ClinotLogo } from "@/components/brand/ClinotLogo"
 
 /**
  * Abstract Clinot AI visualization: a glowing core ringed by floating
@@ -57,13 +58,11 @@ export function HeroVisual() {
         <div className="h-40 w-40 sm:h-52 sm:w-52 rounded-full bg-cyan-300/20 blur-3xl" />
       </div>
 
-      {/* Core: glowing Clinot mark */}
+      {/* Core: the official Clinot mark, glowing */}
       <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hero-enter" style={{ animationDelay: "0.45s" }}>
         <div data-depth="0.35" className="relative">
           <div className="glass-panel flex h-28 w-28 sm:h-36 sm:w-36 items-center justify-center rounded-[2rem]">
-            <span className="flex h-14 w-14 sm:h-16 sm:w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 text-white shadow-glow-lg ai-presence">
-              <Bot className="h-7 w-7 sm:h-8 sm:w-8" />
-            </span>
+            <ClinotLogo size={72} priority className="rounded-[24%] shadow-glow-lg" />
           </div>
           <div className="glass-panel absolute -bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />

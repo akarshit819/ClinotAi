@@ -18,7 +18,6 @@ import {
   ChevronDown,
   Filter,
   Loader2,
-  Bot,
   MoreVertical,
   User,
   Paperclip,
@@ -32,6 +31,7 @@ import {
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/Badge"
 import { Button } from "@/components/ui/Button"
+import { ClinotLogo } from "@/components/brand/ClinotLogo"
 import type { Platform } from "@/messaging/types"
 
 type ConversationStatus = "active" | "waiting_clinic" | "closed" | "archived"
@@ -440,7 +440,9 @@ export default function InboxPage() {
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {messages.length === 0 && (
                 <div className="flex flex-col items-center justify-center h-full text-center">
-                  <Bot className="h-10 w-10 text-navy-200 mb-2" />
+                  <div className="mb-2 opacity-90">
+                    <ClinotLogo size={40} />
+                  </div>
                   <p className="text-xs text-navy-400">AI is processing this conversation.</p>
                 </div>
               )}

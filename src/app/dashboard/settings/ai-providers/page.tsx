@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/Button"
 import { Card, CardContent } from "@/components/ui/Card"
 import { Badge } from "@/components/ui/Badge"
-import { Bot, CheckCircle, ChevronDown, Key, RefreshCw, Trash2, Zap } from "lucide-react"
+import { CheckCircle, ChevronDown, Key, RefreshCw, Trash2, Zap } from "lucide-react"
+import { ClinotLogo } from "@/components/brand/ClinotLogo"
 import { apiFetch } from "@/lib/client-auth"
 
 type BYOProvider = "openai" | "anthropic" | "gemini" | "groq" | "openrouter"
@@ -195,9 +196,7 @@ export default function AIProvidersPage() {
       <Card className="border-emerald-100 dark:border-emerald-800 bg-emerald-25/50 dark:bg-emerald-900/20">
         <CardContent className="p-6">
           <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400">
-              <Bot className="h-6 w-6" />
-            </div>
+            <ClinotLogo size={48} className="shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-base font-bold text-navy-900 dark:text-navy-100">Clinot AI</span>

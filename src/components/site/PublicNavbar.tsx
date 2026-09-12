@@ -5,7 +5,8 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/Button"
-import { Menu, X, Bot, ChevronDown } from "lucide-react"
+import { Menu, X, ChevronDown } from "lucide-react"
+import { ClinotLogo } from "@/components/brand/ClinotLogo"
 import { FEATURES } from "./site-content"
 
 const topLinks = [
@@ -86,9 +87,9 @@ export function PublicNavbar() {
       >
         <div className="flex h-14 items-center justify-between">
           <Link href="/" className="flex items-center gap-2.5 group" aria-label="Clinot home">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary-500 to-primary-700 text-white shadow-glow transition-transform duration-200 group-hover:scale-105">
-              <Bot className="h-5 w-5" />
-            </div>
+            <span className="transition-transform duration-200 group-hover:scale-105 inline-flex">
+              <ClinotLogo size={32} priority className="rounded-lg shadow-glow" />
+            </span>
             <span className="text-base font-bold text-navy-900 tracking-tight">
               Clinot
             </span>

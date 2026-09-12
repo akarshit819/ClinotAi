@@ -1,5 +1,5 @@
-import { Bot } from "lucide-react"
 import { AppBackdrop } from "@/components/ui/AppBackdrop"
+import { ClinotLogo } from "@/components/brand/ClinotLogo"
 
 interface AuthLayoutProps {
   eyebrow: string
@@ -17,8 +17,8 @@ export function AuthLayout({ eyebrow, title, children }: AuthLayoutProps) {
       <AppBackdrop variant="auth" />
       <div className="relative w-full max-w-sm animate-fade-in-up">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-primary-500 shadow-glow">
-            <Bot className="h-5 w-5 text-white" />
+          <div className="mx-auto mb-4 inline-flex rounded-2xl shadow-glow ring-1 ring-white/20">
+            <ClinotLogo size={44} priority />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-navy-900 dark:text-navy-100">Clinot</h1>
           <p className="mt-1 text-sm text-navy-400 dark:text-navy-400">{eyebrow}</p>

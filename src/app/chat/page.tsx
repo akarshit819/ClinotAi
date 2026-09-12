@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Send, Bot, Phone, ArrowDown, ChevronDown, HeartPulse } from "lucide-react"
+import { Send, Phone, ArrowDown, ChevronDown, HeartPulse } from "lucide-react"
+import { ClinotLogo } from "@/components/brand/ClinotLogo"
 import { Card } from "@/components/ui/Card"
 import { MessageBubble } from "@/components/chat/MessageBubble"
 import { TypingIndicator } from "@/components/chat/TypingIndicator"
@@ -183,9 +184,7 @@ export default function ChatPage() {
       <div className="mx-auto max-w-5xl px-3 py-4 md:py-8">
         <div className="flex items-center justify-between mb-4 md:mb-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary-500 to-blue-400 shadow-glow">
-              <Bot className="h-6 w-6 text-white" />
-            </div>
+            <ClinotLogo size={40} className="rounded-xl shadow-glow" />
             <div>
               <h1 className="text-base md:text-lg font-bold text-navy-900">{clinicInfo.name || "Dental Clinic"}</h1>
               <p className="text-xs text-navy-400">AI Front Desk Assistant</p>

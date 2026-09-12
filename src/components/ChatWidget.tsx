@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { Bot, Send, X, MessageSquare, Phone, CalendarCheck, HeartPulse, ChevronDown } from "lucide-react"
+import { Send, X, MessageSquare, Phone, CalendarCheck, HeartPulse, ChevronDown } from "lucide-react"
+import { ClinotLogo } from "@/components/brand/ClinotLogo"
 
 interface Message {
   id: string
@@ -130,7 +131,7 @@ export function ChatWidget() {
         <div className="fixed bottom-5 right-5 z-50 w-[360px] max-w-[calc(100vw-2rem)] rounded-2xl bg-white border border-navy-100 shadow-strong overflow-hidden animate-fade-up flex flex-col" style={{ maxHeight: "min(600px, calc(100vh - 40px))" }}>
           <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-primary-500 to-blue-400 shrink-0">
             <div className="flex items-center gap-2.5">
-              <Bot className="h-5 w-5 text-white" />
+              <ClinotLogo size={20} className="rounded-md ring-1 ring-white/25" />
               <div>
                 <span className="text-sm font-semibold text-white">{clinicName || "Dental Clinic"}</span>
                 <div className="flex items-center gap-1">
@@ -153,9 +154,7 @@ export function ChatWidget() {
             {messages.length === 0 && !showAppointment && !showEmergency && (
               <div className="text-center py-6">
                 <div className="flex justify-center mb-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-50">
-                    <Bot className="h-6 w-6 text-primary-500" />
-                  </div>
+                  <ClinotLogo size={48} />
                 </div>
                 <p className="text-sm font-semibold text-navy-900 mb-1">Hi! How can we help?</p>
                 <p className="text-xs text-navy-400 mb-4">Ask about appointments, hours, or services</p>

@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { Bot, Send, Loader2, Sparkles, MessageSquare, AlertTriangle, Globe, LayoutDashboard, Phone, Calendar, Shield } from "lucide-react"
+import { Send, Loader2, Sparkles, MessageSquare, AlertTriangle, Globe, LayoutDashboard, Phone, Calendar, Shield } from "lucide-react"
+import { ClinotLogo } from "@/components/brand/ClinotLogo"
 import { Card, CardContent } from "@/components/ui/Card"
 import { Badge } from "@/components/ui/Badge"
 
@@ -90,9 +91,7 @@ export function DemoChat() {
           <div className="lg:col-span-3">
             <Card className="overflow-hidden border-2 border-navy-100 shadow-strong">
               <div className="bg-gradient-to-r from-primary-500 to-blue-400 px-5 py-4 flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/20">
-                  <Bot className="h-5 w-5 text-white" />
-                </div>
+                <ClinotLogo size={36} className="rounded-lg ring-1 ring-white/25" />
                 <div>
                   <div className="text-sm font-semibold text-white">Clinot Demo Clinic</div>
                   <div className="flex items-center gap-1.5">

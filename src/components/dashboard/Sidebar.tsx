@@ -5,7 +5,6 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {
-  Bot,
   LayoutDashboard,
   CalendarCheck,
   Users,
@@ -25,6 +24,7 @@ import {
 } from "lucide-react"
 import { removeTokenCookie } from "@/lib/auth-client"
 import { AiPresence } from "@/components/ui/AiPresence"
+import { ClinotLogo } from "@/components/brand/ClinotLogo"
 
 interface NavItem {
   href: string
@@ -122,9 +122,9 @@ export function Sidebar() {
       >
         <div className="flex h-14 items-center gap-3 border-b border-navy-800/50 px-4">
           <Link href="/" className="flex min-w-0 items-center gap-2.5" aria-label="Clinot home">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary-500">
-              <Bot className="h-4 w-4 text-white" />
-            </div>
+            <span className="inline-flex shrink-0 rounded-lg ring-1 ring-white/15">
+              <ClinotLogo size={28} />
+            </span>
             {!collapsed && (
               <span className="truncate text-sm font-semibold tracking-tight text-white">Clinot</span>
             )}

@@ -12,7 +12,7 @@ function baseHtml(content: string): string {
   <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:40px 16px">
     <div style="max-width:480px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
       <div style="padding:32px 32px 0">
-        <img src="${APP_URL}/logo.png" alt="Clinot" width="100" style="margin-bottom:24px" />
+        <img src="${APP_URL}/brand/clinot-logo.png" alt="Clinot" width="72" style="margin-bottom:24px;border-radius:16px" />
         ${content}
       </div>
       <div style="padding:24px 32px;background:#f8f9fb;border-top:1px solid #e8eaee;margin-top:24px">

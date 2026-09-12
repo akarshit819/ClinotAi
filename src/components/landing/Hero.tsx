@@ -2,6 +2,7 @@ import Link from "next/link"
 import { Button } from "@/components/ui/Button"
 import { ArrowRight, Play, MessageCircle, CalendarCheck, ShieldCheck, LayoutDashboard } from "lucide-react"
 import { HeroVisual } from "@/components/site/HeroVisual"
+import { ClinotLogo } from "@/components/brand/ClinotLogo"
 
 const trustItems = [
   { icon: MessageCircle, label: "WhatsApp & website chat" },
@@ -31,10 +32,8 @@ export function Hero() {
         <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-8 pb-14 md:pb-20">
           {/* Copy */}
           <div className="text-center lg:text-left max-w-2xl mx-auto lg:mx-0">
-            <div className="hero-enter inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/60 py-1.5 pl-2 pr-3.5 shadow-sm backdrop-blur-md mb-7" style={{ animationDelay: "0.05s" }}>
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-br from-primary-500 to-primary-700 text-[10px] font-bold text-white">
-                C
-              </span>
+            <div className="hero-enter inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/60 py-1.5 pl-1.5 pr-3.5 shadow-sm backdrop-blur-md mb-7" style={{ animationDelay: "0.05s" }}>
+              <ClinotLogo size={20} priority />
               <span className="text-xs font-semibold tracking-wide text-navy-700">
                 Clinot AI · AI Front Desk for Clinics
               </span>

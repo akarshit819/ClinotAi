@@ -1,4 +1,5 @@
-import { User, MessageCircle, Bot, BookOpen, CalendarCheck, LayoutDashboard } from "lucide-react"
+import { User, MessageCircle, BookOpen, CalendarCheck, LayoutDashboard } from "lucide-react"
+import { ClinotLogo } from "@/components/brand/ClinotLogo"
 import { Reveal } from "./Reveal"
 
 const nodes = [
@@ -13,7 +14,7 @@ const nodes = [
     desc: "Clinot's WhatsApp integration picks the message up instantly and queues it for processing.",
   },
   {
-    icon: Bot,
+    logo: true,
     title: "Clinot AI understands",
     desc: "The AI receptionist classifies the intent, checks guardrails, and stays strictly on clinic topics.",
   },
@@ -47,11 +48,15 @@ export function HowItWorksFlow() {
         className="absolute left-[1.4rem] md:left-[1.6rem] top-4 bottom-4 w-px bg-gradient-to-b from-primary-200 via-primary-100 to-transparent"
       />
       {nodes.map((node, i) => {
-        const Icon = node.icon
+        const Icon = "icon" in node ? node.icon : null
         return (
           <Reveal as="li" key={node.title} delay={Math.min(i * 60, 300)} className="relative flex gap-4 md:gap-5 pb-8 last:pb-0">
             <span className="relative z-10 flex h-11 w-11 md:h-[3.25rem] md:w-[3.25rem] shrink-0 items-center justify-center rounded-2xl bg-white border border-navy-100 shadow-card text-primary-600">
-              <Icon className="h-5 w-5" />
+              {"logo" in node ? (
+                <ClinotLogo size={28} />
+              ) : (
+                Icon && <Icon className="h-5 w-5" />
+              )}
               <span className="absolute -top-2 -right-2 flex h-5 w-5 items-center justify-center rounded-full bg-primary-500 text-[10px] font-bold text-white">
                 {i + 1}
               </span>

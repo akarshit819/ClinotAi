@@ -1,7 +1,8 @@
 "use client"
 
-import { Bot, User } from "lucide-react"
+import { User } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { ClinotLogo } from "@/components/brand/ClinotLogo"
 
 interface MessageBubbleProps {
   role: "user" | "assistant"
@@ -15,12 +16,10 @@ export function MessageBubble({ role, content, timestamp }: MessageBubbleProps) 
       <div
         className={cn(
           "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-          role === "assistant"
-            ? "bg-gradient-to-br from-primary-500 to-blue-400 text-white shadow-glow"
-            : "bg-navy-100 text-navy-600",
+          role === "assistant" ? "" : "bg-navy-100 text-navy-600",
         )}
       >
-        {role === "assistant" ? <Bot className="h-4 w-4" /> : <User className="h-4 w-4" />}
+        {role === "assistant" ? <ClinotLogo size={32} className="rounded-lg shadow-glow" /> : <User className="h-4 w-4" />}
       </div>
       <div className={cn("flex flex-col max-w-[75%]", role === "user" && "items-end")}>
         <div

@@ -53,7 +53,10 @@ export const metadata: Metadata = {
     images: ["/og-image.png"],
   },
   robots: { index: true, follow: true },
-  icons: { icon: "/favicon.ico", apple: "/apple-touch-icon.png" },
+  icons: {
+    icon: [{ url: "/brand/clinot-logo.png", type: "image/png" }],
+    apple: [{ url: "/brand/clinot-logo.png", type: "image/png" }],
+  },
   alternates: { canonical: APP_URL },
 }
 

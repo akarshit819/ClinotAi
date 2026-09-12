@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { Bot } from "lucide-react"
+import { ClinotLogo } from "@/components/brand/ClinotLogo"
 
 const columns: Array<{ heading: string; links: Array<{ label: string; href: string }> }> = [
   {
@@ -45,9 +45,7 @@ export function PublicFooter() {
         <div className="grid gap-10 lg:grid-cols-6">
           <div className="lg:col-span-2">
             <Link href="/" className="flex items-center gap-2.5 mb-4" aria-label="Clinot home">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-500 text-white">
-                <Bot className="h-5 w-5" />
-              </span>
+              <ClinotLogo size={32} />
               <span className="text-base font-bold text-navy-900 tracking-tight">Clinot</span>
             </Link>
             <p className="text-sm text-navy-400 max-w-sm leading-relaxed mb-4">
