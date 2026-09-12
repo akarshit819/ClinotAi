@@ -16,17 +16,17 @@ export function VisionSection() {
           Your team works hard enough. They should not have to answer the same questions every day. They should not miss opportunities because the clinic is closed.
         </p>
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
-          <Link href="/login">
+          <Link href="/signup">
             <Button size="lg">
-              Book a Demo
+              Get Started
               <ArrowRight className="h-4 w-4" />
             </Button>
           </Link>
-          <a href="#demo-chat">
+          <Link href="/demo">
             <Button size="lg" variant="secondary">
               See It Live
             </Button>
-          </a>
+          </Link>
         </div>
       </div>
     </section>

@@ -31,16 +31,16 @@ export function Hero() {
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 animate-fade-in-up mb-16" style={{ animationDelay: "0.2s" }}>
-            <a href="#demo-chat">
+            <a href="/signup">
               <Button size="lg" className="w-full sm:w-auto">
-                Book a Demo
+                Get Started
                 <ArrowRight className="h-4 w-4" />
               </Button>
             </a>
-            <a href="#how-it-works">
+            <a href="/demo">
               <Button size="lg" variant="secondary" className="w-full sm:w-auto">
                 <Play className="h-4 w-4" />
-                See Clinot in Action
+                See It Live
               </Button>
             </a>
           </div>
