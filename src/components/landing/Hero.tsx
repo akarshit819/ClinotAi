@@ -1,67 +1,103 @@
+import Link from "next/link"
 import { Button } from "@/components/ui/Button"
-import { Badge } from "@/components/ui/Badge"
-import { ArrowRight, Play } from "lucide-react"
+import { ArrowRight, Play, MessageCircle, CalendarCheck, ShieldCheck, LayoutDashboard } from "lucide-react"
+import { HeroVisual } from "@/components/site/HeroVisual"
 
+const trustItems = [
+  { icon: MessageCircle, label: "WhatsApp & website chat" },
+  { icon: CalendarCheck, label: "Appointment capture" },
+  { icon: ShieldCheck, label: "Clinic-only AI boundaries" },
+  { icon: LayoutDashboard, label: "Team dashboard" },
+]
+
+/**
+ * Clinot AI grand entrance: cinematic two-column hero. Ambient light,
+ * drifting grid, staggered entrance, and a floating glass AI system
+ * visualization beside confident typography.
+ */
 export function Hero() {
   return (
-    <section className="relative min-h-screen flex items-center overflow-hidden pt-20">
-      <div className="absolute inset-0 bg-gradient-to-b from-gray-25 via-primary-25/30 to-gray-25 pointer-events-none" />
-      <div className="absolute inset-0 bg-grid opacity-[0.4]" />
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-[500px] h-[500px] bg-primary-500/4 rounded-full blur-3xl" />
-        <div className="absolute -bottom-40 -left-40 w-[500px] h-[500px] bg-primary-300/4 rounded-full blur-3xl" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-primary-400/3 rounded-full blur-3xl" />
+    <section className="relative overflow-hidden pt-28 md:pt-36">
+      {/* Futuristic ambient background */}
+      <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+        <div className="absolute inset-0 bg-gradient-to-b from-primary-25/60 via-gray-25 to-gray-25" />
+        <div className="hero-grid-drift absolute -inset-8 bg-grid opacity-60 [mask-image:radial-gradient(ellipse_75%_65%_at_50%_35%,black,transparent)]" />
+        <div className="absolute -top-32 left-1/2 -translate-x-1/2 h-72 w-[42rem] max-w-none rounded-full bg-primary-300/25 blur-3xl" />
+        <div className="orb-breathe absolute top-24 -left-32 h-80 w-80 rounded-full bg-indigo-300/20 blur-3xl" />
+        <div className="orb-breathe absolute top-64 -right-32 h-80 w-80 rounded-full bg-cyan-200/30 blur-3xl" style={{ animationDelay: "2.5s" }} />
       </div>
 
-      <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-24 md:py-32">
-        <div className="max-w-4xl mx-auto text-center">
-          <div className="flex justify-center mb-8 animate-fade-in">
-            <Badge variant="primary" size="md" className="text-xs px-3 py-1 gap-1">
+      <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-8 pb-14 md:pb-20">
+          {/* Copy */}
+          <div className="text-center lg:text-left max-w-2xl mx-auto lg:mx-0">
+            <div className="hero-enter inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/60 py-1.5 pl-2 pr-3.5 shadow-sm backdrop-blur-md mb-7" style={{ animationDelay: "0.05s" }}>
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-br from-primary-500 to-primary-700 text-[10px] font-bold text-white">
+                C
+              </span>
+              <span className="text-xs font-semibold tracking-wide text-navy-700">
+                Clinot AI · AI Front Desk for Clinics
+              </span>
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              Trusted by 200+ clinics
-            </Badge>
+            </div>
+
+            <h1 className="hero-enter text-[2.6rem] leading-[1.04] sm:text-6xl lg:text-[4.4rem] font-bold text-navy-900 tracking-tight text-balance" style={{ animationDelay: "0.15s" }}>
+              Your clinic&apos;s
+              <br />
+              AI front desk.
+              <br />
+              <span className="text-brand-gradient">Always on.</span>
+            </h1>
+
+            <p className="hero-enter text-base md:text-lg text-navy-400 max-w-xl mx-auto lg:mx-0 mt-6 leading-relaxed text-balance" style={{ animationDelay: "0.3s" }}>
+              Clinot answers routine patient questions, captures appointment requests, and helps
+              your team respond faster — 24 hours a day.
+            </p>
+
+            <div className="hero-enter flex flex-col sm:flex-row items-center lg:items-start justify-center lg:justify-start gap-3 mt-9" style={{ animationDelay: "0.42s" }}>
+              <Link href="/signup" className="group w-full sm:w-auto">
+                <Button
+                  size="lg"
+                  className="w-full sm:w-auto bg-gradient-to-r from-primary-600 to-primary-500 shadow-glow-lg hover:shadow-glow-lg hover:-translate-y-0.5 transition-all duration-200"
+                >
+                  Get Started
+                  <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-1" />
+                </Button>
+              </Link>
+              <Link href="/demo" className="group w-full sm:w-auto">
+                <Button
+                  size="lg"
+                  variant="secondary"
+                  className="w-full sm:w-auto bg-white/60 backdrop-blur-md border-white/60 hover:bg-white/85 hover:-translate-y-0.5 transition-all duration-200"
+                >
+                  <Play className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" />
+                  See It Live
+                </Button>
+              </Link>
+            </div>
           </div>
 
-          <h1 className="text-[2.25rem] sm:text-5xl md:text-6xl lg:text-7xl font-bold text-navy-900 tracking-tight leading-[1.08] mb-6 animate-fade-in-up text-balance">
-            Never Miss Another Patient Inquiry.
-          </h1>
-
-          <p className="text-base md:text-lg text-navy-400 max-w-3xl mx-auto mb-10 animate-fade-in-up leading-relaxed text-balance" style={{ animationDelay: "0.1s" }}>
-            Every unanswered question is a missed opportunity. Clinot acts as your AI Receptionist, answering patients instantly, collecting appointment requests, and helping your team respond faster — 24 hours a day.
-          </p>
-
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 animate-fade-in-up mb-16" style={{ animationDelay: "0.2s" }}>
-            <a href="/signup">
-              <Button size="lg" className="w-full sm:w-auto">
-                Get Started
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-            </a>
-            <a href="/demo">
-              <Button size="lg" variant="secondary" className="w-full sm:w-auto">
-                <Play className="h-4 w-4" />
-                See It Live
-              </Button>
-            </a>
+          {/* Visual */}
+          <div className="lg:pl-4">
+            <HeroVisual />
           </div>
+        </div>
 
-          <dl className="flex items-stretch justify-center gap-8 md:gap-0 flex-wrap animate-fade-in-up" style={{ animationDelay: "0.3s" }}>
-            {[
-              { stat: "24/7", label: "Always answering" },
-              { stat: "<60s", label: "Median first response" },
-              { stat: "0", label: "Missed inquiries" },
-            ].map((item, i) => (
-              <div
-                key={item.label}
-                className={`flex flex-col px-2 text-center md:px-10 ${i > 0 ? "md:border-l md:border-navy-100 dark:md:border-navy-800" : ""}`}
-              >
-                <dd className="text-2xl font-bold tracking-tight text-navy-900 dark:text-navy-100 md:text-3xl">
-                  {item.stat === "0" ? <span className="text-primary-600 dark:text-primary-400">{item.stat}</span> : item.stat}
-                </dd>
-                <dt className="mt-1 text-sm text-navy-400 dark:text-navy-500">{item.label}</dt>
-              </div>
-            ))}
-          </dl>
+        {/* Truthful trust strip */}
+        <div className="hero-enter relative border-t border-navy-100/70" style={{ animationDelay: "0.55s" }}>
+          <ul className="grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-4 py-7">
+            {trustItems.map((item) => {
+              const Icon = item.icon
+              return (
+                <li key={item.label} className="flex items-center justify-center lg:justify-start gap-2.5">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/70 border border-white/60 text-primary-600 shadow-sm backdrop-blur-md">
+                    <Icon className="h-4 w-4" />
+                  </span>
+                  <span className="text-[13px] font-semibold text-navy-700">{item.label}</span>
+                </li>
+              )
+            })}
+          </ul>
         </div>
       </div>
     </section>

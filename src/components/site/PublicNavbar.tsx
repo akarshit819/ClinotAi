@@ -9,7 +9,6 @@ import { Menu, X, Bot, ChevronDown } from "lucide-react"
 import { FEATURES } from "./site-content"
 
 const topLinks = [
-  { label: "Product", href: "/product" },
   { label: "How It Works", href: "/how-it-works" },
   { label: "Pricing", href: "/pricing" },
   { label: "Security", href: "/security" },
@@ -73,18 +72,21 @@ export function PublicNavbar() {
   const featuresActive = pathname === "/features" || pathname.startsWith("/features/")
 
   return (
-    <header
-      className={cn(
-        "fixed top-0 left-0 right-0 z-50 transition-all duration-300 ease-out-cubic",
-        scrolled || mobileOpen
-          ? "bg-white/80 backdrop-blur-xl border-b border-navy-75/50 shadow-sm"
-          : "bg-transparent",
-      )}
-    >
-      <nav aria-label="Primary" className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div className="flex h-16 items-center justify-between">
+    <header className="fixed top-0 left-0 right-0 z-50 px-3 sm:px-4 pt-3">
+      <nav
+        aria-label="Primary"
+        className={cn(
+          "mx-auto max-w-7xl rounded-2xl border px-4 sm:px-5 transition-all duration-300 ease-out-cubic",
+          "bg-white/65 backdrop-blur-xl border-white/50",
+          "dark:bg-navy-900/65 dark:border-white/10",
+          scrolled || mobileOpen || featuresOpen
+            ? "shadow-card-hover"
+            : "shadow-card",
+        )}
+      >
+        <div className="flex h-14 items-center justify-between">
           <Link href="/" className="flex items-center gap-2.5 group" aria-label="Clinot home">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-500 text-white transition-transform duration-200 group-hover:scale-105">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary-500 to-primary-700 text-white shadow-glow transition-transform duration-200 group-hover:scale-105">
               <Bot className="h-5 w-5" />
             </div>
             <span className="text-base font-bold text-navy-900 tracking-tight">
@@ -93,19 +95,6 @@ export function PublicNavbar() {
           </Link>
 
           <div className="hidden md:flex items-center gap-1">
-            <Link
-              href="/product"
-              aria-current={isActive(pathname, "/product") ? "page" : undefined}
-              className={cn(
-                "px-3 py-2 text-sm font-medium rounded-lg transition-all duration-150",
-                isActive(pathname, "/product")
-                  ? "text-navy-900 bg-navy-50"
-                  : "text-navy-500 hover:text-navy-900 hover:bg-navy-25",
-              )}
-            >
-              Product
-            </Link>
-
             <div
               ref={dropdownRef}
               className="relative"
@@ -161,7 +150,7 @@ export function PublicNavbar() {
               )}
             </div>
 
-            {topLinks.slice(1).map((link) => (
+            {topLinks.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
@@ -182,8 +171,10 @@ export function PublicNavbar() {
             <Link href="/login">
               <Button variant="ghost" size="sm">Sign In</Button>
             </Link>
-            <Link href="/signup">
-              <Button size="sm">Get Started</Button>
+            <Link href="/signup" className="group">
+              <Button size="sm" className="bg-gradient-to-r from-primary-600 to-primary-500 shadow-glow hover:shadow-glow-lg hover:-translate-y-px transition-all duration-200">
+                Get Started
+              </Button>
             </Link>
           </div>
 
@@ -201,19 +192,16 @@ export function PublicNavbar() {
 
       {/* Mobile drawer */}
       {mobileOpen && (
-        <div className="md:hidden fixed inset-0 top-16 z-40 bg-white animate-fade-in overflow-y-auto">
-          <nav aria-label="Mobile" className="px-4 sm:px-6 py-4 pb-10">
-            <Link
-              href="/product"
-              className="block px-3 py-3 text-base font-medium text-navy-700 hover:bg-navy-25 rounded-xl transition-colors"
-            >
-              Product
-            </Link>
+        <div className="md:hidden mx-auto max-w-7xl px-3 sm:px-4">
+          <nav
+            aria-label="Mobile"
+            className="mt-2 rounded-2xl border border-white/50 bg-white/90 backdrop-blur-xl shadow-card-hover px-3 py-3 max-h-[calc(100dvh-6rem)] overflow-y-auto animate-dropdown"
+          >
             <button
               type="button"
               onClick={() => setMobileFeaturesOpen((v) => !v)}
               aria-expanded={mobileFeaturesOpen}
-              className="flex w-full items-center justify-between px-3 py-3 text-base font-medium text-navy-700 hover:bg-navy-25 rounded-xl transition-colors"
+              className="flex w-full items-center justify-between px-3 py-3 text-base font-medium text-navy-700 hover:bg-navy-25 rounded-xl transition-colors min-h-[48px]"
             >
               Features
               <ChevronDown className={cn("h-4 w-4 text-navy-400 transition-transform duration-200", mobileFeaturesOpen && "rotate-180")} />
@@ -237,7 +225,7 @@ export function PublicNavbar() {
                 ))}
               </div>
             )}
-            {topLinks.slice(1).map((link) => (
+            {topLinks.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}

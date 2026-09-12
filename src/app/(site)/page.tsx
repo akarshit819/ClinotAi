@@ -2,7 +2,7 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import { Hero } from "@/components/landing/Hero"
 import { CTASection } from "@/components/site/CTASection"
-import { FeatureCard } from "@/components/site/FeatureCard"
+import { PlatformBento } from "@/components/site/PlatformBento"
 import { SectionHeader } from "@/components/site/SectionHeader"
 import { Reveal } from "@/components/site/Reveal"
 import { Button } from "@/components/ui/Button"
@@ -79,31 +79,8 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Product pillars */}
-      <section aria-label="What Clinot does" className="relative py-20 md:py-28 overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-b from-gray-25 via-white to-gray-25 pointer-events-none" aria-hidden="true" />
-        <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <SectionHeader
-            badge="Product"
-            title="One front desk for every patient conversation"
-            subtitle="Four pillars that handle the routine — so your team can focus on care."
-          />
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <FeatureCard slug="ai-receptionist" />
-            <FeatureCard slug="appointments" />
-            <FeatureCard slug="patient-communication" />
-            <FeatureCard slug="dashboard" />
-          </div>
-          <Reveal className="text-center mt-8">
-            <Link href="/features">
-              <Button variant="secondary">
-                Browse all features
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-            </Link>
-          </Reveal>
-        </div>
-      </section>
+      {/* Platform bento */}
+      <PlatformBento />
 
       {/* How it works preview */}
       <section aria-label="How Clinot works" className="relative py-20 md:py-28 bg-white overflow-hidden">
