@@ -72,6 +72,11 @@ export async function generateAIResponse(
     return guardrail.message || "I'm here to help. Please feel free to ask about our services and appointments."
   }
 
+  if (guardrail.action === "off_topic") {
+    logger.info("Off-topic detected", { confidence: guardrail.confidence })
+    return guardrail.message || "I'm Clinot, the clinic's virtual receptionist. I can help with appointments, clinic information, doctors, and other clinic-related questions. How can I help you today?"
+  }
+
   try {
     const [clinic, knowledgeBase, faqs] = await Promise.all([
       prisma.clinic.findUnique({ where: { id: clinicId } }),
@@ -249,6 +254,11 @@ export async function generateAIResponseWithTools(
   if (guardrail.action === "abuse") {
     trace({ stage: "final", aiCallAttempted: false, fallbackReason: "GUARDRAIL_BLOCKED" })
     return { response: guardrail.message || "I'm here to help. Please feel free to ask about our services and appointments.", toolCalls: [], fallbackReason: "GUARDRAIL_BLOCKED" }
+  }
+
+  if (guardrail.action === "off_topic") {
+    trace({ stage: "final", aiCallAttempted: false, fallbackReason: "GUARDRAIL_BLOCKED", deterministicPath: "OFF_TOPIC" })
+    return { response: guardrail.message || "I'm Clinot, the clinic's virtual receptionist. I can help with appointments, clinic information, doctors, and other clinic-related questions. How can I help you today?", toolCalls: [], fallbackReason: "GUARDRAIL_BLOCKED" }
   }
 
   try {

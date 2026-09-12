@@ -49,6 +49,7 @@ export type Route =
   | "CLINIC_INFORMATION"
   | "INSURANCE"
   | "MEDICAL_SYMPTOM"
+  | "OFF_TOPIC"
   | "GENERAL"
 
 export interface RouteDecision {
@@ -135,6 +136,43 @@ const GREETING_PATTERNS: RegExp[] = [
   /^(thanks|thank\s+you|appreciate|grateful|ty|thx)\b/i,
   /^(bye|goodbye|see\s+you|good\s+night|talk\s+to\s+you\s+later|have\s+a\s+great\s+day|talk\s+later|cya)\b/i,
   /^(ok|okay|sure|alright|fine|cool|great|awesome|got\s+it)\b/i,
+]
+
+// OFF_TOPIC patterns — must be checked AFTER appointment/emergency
+// routes but BEFORE GENERAL fallback. These mirror the guardrails
+// OFF_TOPIC_PATTERNS but can be more context-aware since we have
+// the full classifier here.
+const OFF_TOPIC_PATTERNS: RegExp[] = [
+  // Coding / programming
+  /\b(write|create|generate|code|program|script|function|algorithm)\s+(code|program|script|function|algorithm|a\s+\w+\s+(in|for|using)\s+\w+)/i,
+  /\b(teach|show|explain)\s+me\s+(how\s+to\s+)?(code|program|script|javascript|python|java|c\+\+|c#|ruby|go|rust|php|sql|html|css|react|vue|angular|node|express|django|flask|spring)/i,
+  /\b(how\s+do\s+I|how\s+to)\s+(write|code|create|build|make)\s+(a\s+)?(program|script|function|app|website|api|component)/i,
+  /\b(python|javascript|java|c\+\+|c#|ruby|go|rust|php|sql|html|css|react|vue|angular|node|express|django|flask|spring)\s+(code|program|script|tutorial|example)/i,
+  /\b(for\s+loop|while\s+loop|if\s+statement|async|await|promise|callback|regex|api|endpoint|database|query|sql)\b/i,
+
+  // Prompt injection / role override
+  /\b(ignore|forget|disregard|override)\s+(previous|all|your)\s+(instructions|prompts|rules|directives)/i,
+  /\b(you\s+are\s+now|act\s+as|pretend\s+to\s+be|roleplay\s+as|simulate\s+being)\s+(a\s+)?(programmer|coder|developer|software\s+engineer|assistant|ai|bot)/i,
+  /\b(new\s+(instructions|rules|role|prompt):|system\s+prompt:)/i,
+  /\b(stop\s+being|forget\s+you\s+are|no\s+longer\s+a)\s+(receptionist|clinot)/i,
+
+  // System prompt / architecture extraction
+  /\b(what\s+(is|are)\s+your\s+(system\s+)?(prompt|instructions|initial\s+instructions))\b/i,
+  /\b(show|print|display|output|reveal|tell\s+me)\s+(your\s+)?(system\s+)?(prompt|instructions|message)\b/i,
+  /\b(what\s+(model|llm|architecture)\s+(are\s+you|powers\s+you|do\s+you\s+use))\b/i,
+  /\b(are\s+you\s+(gpt|claude|gemini|llama|mistral))\b/i,
+  /\b(who\s+(created|made|trained)\s+you)\b/i,
+  /\b(what\s+is\s+your\s+(training\s+data|knowledge\s+cutoff))\b/i,
+
+  // Essay / general writing
+  /\b(write|compose|create|generate)\s+(an?\s+)?(essay|story|article|email|letter|cover\s+letter|summary|poem|blog\s+post)/i,
+  /\b(summarize|explain)\s+(the\s+)?(book|movie|article|paper|concept|theory)\b/i,
+  /\b(quantum\s+physics|climate\s+change|relativity|evolution)\b/i,
+
+  // Paraphrased coding requests
+  /\b(can\s+you\s+help\s+me\s+with\s+(some\s+)?code)\b/i,
+  /\b(i\s+need\s+help\s+(writing|with)\s+(a\s+)?(script|program|code))\b/i,
+  /\b(give\s+me\s+(some\s+)?code\s+(for|to))\b/i,
 ]
 
 const THANKS_PATTERNS: RegExp[] = [
@@ -288,6 +326,19 @@ export function classifyRoute(
       expectedField: null,
       slotAnswerCandidate: false,
       reason: "smalltalk_keyword",
+    }
+  }
+
+  // LEVEL 5b: Off-topic detection — checked after all clinic-related
+  // routes but before GENERAL fallback. This ensures appointment,
+  // clinic info, insurance, symptoms, greetings all pass through,
+  // while coding/essays/injection/extraction are caught.
+  if (matchesAny(OFF_TOPIC_PATTERNS, text)) {
+    return {
+      route: "OFF_TOPIC",
+      expectedField: null,
+      slotAnswerCandidate: false,
+      reason: "off_topic_keyword",
     }
   }
 

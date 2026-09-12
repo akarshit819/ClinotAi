@@ -929,7 +929,53 @@ export async function runAiReceptionist(
     decision.route === "CLINIC_INFORMATION" ? "general_question" :
     decision.route === "INSURANCE" ? "general_question" :
     decision.route === "MEDICAL_SYMPTOM" ? "general_question" :
+    decision.route === "OFF_TOPIC" ? "general_question" :
     "general_question"
+
+  // LEVEL 5a: OFF_TOPIC — return standard redirect, no AI call
+  if (decision.route === "OFF_TOPIC") {
+    logger.info("[RECEPTIONIST] Off-topic — returning redirect", {
+      conversationId: context.conversation.id,
+      clinicId: context.clinicId,
+    })
+    return {
+      response: "I'm Clinot, the clinic's virtual receptionist. I can help with appointments, clinic information, doctors, and other clinic-related questions. How can I help you today?",
+      intent: "general_question",
+      confidence: 0.95,
+      requiresClinic: false,
+      responseSource: "FALLBACK",
+    }
+  }
+
+  // LEVEL 5b: CANCEL_INTENT — deterministic response for cancellation
+  if (decision.route === "CANCEL_INTENT") {
+    logger.info("[RECEPTIONIST] Cancel intent — returning deterministic response", {
+      conversationId: context.conversation.id,
+      clinicId: context.clinicId,
+    })
+    return {
+      response: "I can help you cancel your appointment. Could you please provide your appointment details (date, time, or confirmation number) so I can locate it?",
+      intent: "general_question",
+      confidence: 0.9,
+      requiresClinic: false,
+      responseSource: "APPOINTMENT",
+    }
+  }
+
+  // LEVEL 5c: RESCHEDULE_INTENT — deterministic response for rescheduling
+  if (decision.route === "RESCHEDULE_INTENT") {
+    logger.info("[RECEPTIONIST] Reschedule intent — returning deterministic response", {
+      conversationId: context.conversation.id,
+      clinicId: context.clinicId,
+    })
+    return {
+      response: "I can help you reschedule your appointment. Could you please provide your current appointment details (date, time, or confirmation number) and your new preferred date and time?",
+      intent: "general_question",
+      confidence: 0.9,
+      requiresClinic: false,
+      responseSource: "APPOINTMENT",
+    }
+  }
 
   logger.info("[RECEPTIONIST] Normal flow", {
     conversationId: context.conversation.id,

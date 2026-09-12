@@ -37,6 +37,67 @@ const ABUSE_PATTERNS = [
   /\b(suck|sucks|worst|terrible|useless)\s*(at\s*)?(this|app|you|your)\b/i,
 ]
 
+// OFF_TOPIC patterns — blocks non-clinic requests to keep Clinot
+// strictly in its receptionist role. These are INTENT-based, not
+// simple keyword blacklists, to avoid false positives on clinic
+// conversations that happen to mention these words (e.g., "code" in
+// "barcode scanner at reception").
+const OFF_TOPIC_PATTERNS = [
+  // Coding / programming requests
+  /\b(write|create|generate|code|program|script|function|algorithm)\s+(code|program|script|function|algorithm|a\s+\w+\s+(in|for|using)\s+\w+)/i,
+  /\b(teach|show|explain)\s+me\s+(how\s+to\s+)?(code|program|script|javascript|python|java|c\+\+|c#|ruby|go|rust|php|sql|html|css|react|vue|angular|node|express|django|flask|spring)/i,
+  /\b(how\s+do\s+I|how\s+to)\s+(write|code|create|build|make)\s+(a\s+)?(program|script|function|app|website|api|component)/i,
+  /\b(python|javascript|java|c\+\+|c#|ruby|go|rust|php|sql|html|css|react|vue|angular|node|express|django|flask|spring)\s+(code|program|script|tutorial|example)/i,
+  /\b(for\s+loop|while\s+loop|if\s+statement|async|await|promise|callback|regex|api|endpoint|database|query|sql)\b/i,
+  // More specific coding patterns that were missing
+  /\b(create|build|make|write)\s+(a\s+)?(react|vue|angular)\s+(component|app)/i,
+  /\b(code|write|implement)\s+(a\s+)?(binary\s+search|sort|algorithm|function|class)\b/i,
+  /\b(write|create|make)\s+(a\s+)?(function|method|script|program)\s+(that|to|for)\b/i,
+  /\b(fibonacci|factorial|palindrome|prime)\b/i,
+
+  // Prompt injection / role override
+  /\b(ignore|forget|disregard|override)\s+(previous|all|your)\s+(instructions|prompts|rules|directives)/i,
+  /\b(you\s+are\s+now|act\s+as|pretend\s+to\s+be|roleplay\s+as|simulate\s+being)\s+(a\s+)?(programmer|coder|developer|software\s+engineer|assistant|ai|bot)/i,
+  /\b(new\s+(instructions|rules|role|prompt):|system\s+prompt:)/i,
+  /\b(stop\s+being|forget\s+you\s+are|no\s+longer\s+a)\s+(receptionist|clinot)/i,
+  // More injection patterns
+  /\b(act\s+as\s+if\s+you\s+are\s+not|pretend\s+(you\s+are\s+)?not\s+a)\s+(receptionist|clinot)/i,
+  /\b(your\s+new\s+role\s+is|your\s+role\s+is\s+now)\s+(developer|programmer|coder|engineer)/i,
+  /\b(override:\s*you\s+are\s+a)\s+(coding\s+assistant|programmer|developer)/i,
+  /\b(forget\s+everything\s+and\s+act\s+as\s+a)\s+(coding\s+assistant|programmer|developer)/i,
+  // Additional injection patterns that were missing
+  /\b(pretend\s+(you\s+are\s+)?a\s+(software\s+engineer|programmer|developer|coder))\b/i,
+  /\b(ignore\s+all\s+previous\s+instructions)\b/i,
+  /\b(act\s+as\s+if\s+you\s+are\s+not\s+a\s+receptionist)\b/i,
+  /\b(stop\s+being\s+a\s+receptionist)\b/i,
+
+  // System prompt / architecture extraction
+  /\b(what\s+(is|are)\s+your\s+(system\s+)?(prompt|instructions|initial\s+instructions))\b/i,
+  /\b(show|print|display|output|reveal|tell\s+me)\s+(your\s+)?(system\s+)?(prompt|instructions|message)\b/i,
+  /\b(what\s+(model|llm|architecture)\s+(are\s+you|powers\s+you|do\s+you\s+use))\b/i,
+  /\b(are\s+you\s+(gpt|claude|gemini|llama|mistral))\b/i,
+  /\b(who\s+(created|made|trained)\s+you)\b/i,
+  /\b(what\s+is\s+your\s+(training\s+data|knowledge\s+cutoff))\b/i,
+  // More extraction patterns
+  /\b(show\s+me\s+your\s+(instructions|system\s+prompt))\b/i,
+  /\b(what'?s\s+your\s+architecture)\b/i,
+  /\b(how\s+(were|are)\s+you\s+(trained|created))\b/i,
+  /\b(what\s+prompt\s+(were|are)\s+you\s+given)\b/i,
+
+  // Essay / general writing requests
+  /\b(write|compose|create|generate)\s+(an?\s+)?(essay|story|article|email|letter|cover\s+letter|summary|poem|blog\s+post)/i,
+  /\b(summarize|explain)\s+(the\s+)?(book|movie|article|paper|concept|theory)\b/i,
+  /\b(quantum\s+physics|climate\s+change|relativity|evolution)\b/i,
+  // More writing patterns
+  /\b(write|compose)\s+(a\s+)?(short\s+story|poem|email|letter)\b/i,
+  /\b(summarize\s+the\s+book)\b/i,
+
+  // General "help me with code" paraphrased
+  /\b(can\s+you\s+help\s+me\s+with\s+(some\s+)?code)\b/i,
+  /\b(i\s+need\s+help\s+(writing|with)\s+(a\s+)?(script|program|code))\b/i,
+  /\b(give\s+me\s+(some\s+)?code\s+(for|to))\b/i,
+]
+
 const GIBBERISH_THRESHOLD = 0.6
 
 const MEDICAL_AVOID_PATTERNS = [
@@ -53,7 +114,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export interface GuardrailResult {
   passed: boolean
-  action: "allow" | "emergency" | "spam" | "abuse" | "invalid" | "medical_query"
+  action: "allow" | "emergency" | "spam" | "abuse" | "invalid" | "medical_query" | "off_topic"
   message?: string
   confidence: number
 }
@@ -110,6 +171,10 @@ export function checkMedicalQuery(text: string): boolean {
   return MEDICAL_AVOID_PATTERNS.some((p) => p.test(text))
 }
 
+export function checkOffTopic(text: string): boolean {
+  return OFF_TOPIC_PATTERNS.some((p) => p.test(text))
+}
+
 export function validateInput(text: string): GuardrailResult {
   const trimmed = text.trim()
 
@@ -148,6 +213,15 @@ export function validateInput(text: string): GuardrailResult {
       passed: true,
       action: "medical_query",
       confidence: 0.8,
+    }
+  }
+
+  if (checkOffTopic(trimmed)) {
+    return {
+      passed: false,
+      action: "off_topic",
+      confidence: 0.95,
+      message: "I'm Clinot, the clinic's virtual receptionist. I can help with appointments, clinic information, doctors, and other clinic-related questions. How can I help you today?",
     }
   }
 

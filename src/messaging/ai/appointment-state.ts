@@ -69,12 +69,15 @@ export function isAppointmentStart(message: string): boolean {
 // receptionist flow so the existing booking (if any) can be
 // cancelled or rescheduled through the standard clinic tooling.
 const CANCEL_PATTERNS: RegExp[] = [
+  /\b(cancel|cancellation|cancelled|cancelling)\b.*\b(appointment|booking|visit)\b/i,
   /\b(cancel|cancellation|cancelled|cancelling)\b/i,
 ]
 const RESCHEDULE_PATTERNS: RegExp[] = [
-  new RegExp("\\b(i\\s+need\\s+to\\s+reschedule|i\\s+want\\s+to\\s+reschedule|reschedule|re-?schedule)\\b", "i"),
+  new RegExp("\\b(i\\s+need\\s+to\\s+reschedule|i\\s+want\\s+to\\s+reschedule)\\b", "i"),
+  new RegExp("\\b(reschedule|re-?schedule)\\b.*\\b(appointment|booking|visit|my)\\b", "i"),
   new RegExp("\\b(change\\s+my|change\\s+the|move\\s+my|move\\s+the)\\b.*\\b(appointment|booking|visit)\\b", "i"),
-  new RegExp("\\b(can\\s+i\\s+(move|change|reschedule|re-?schedule))\\b", "i"),
+  new RegExp("\\b(can\\s+i\\s+(move|change|reschedule|re-?schedule))\\b.*\\b(appointment|booking|visit|my)\\b", "i"),
+  new RegExp("\\b(reschedule|re-?schedule)\\b.*\\b(my|the)\\b.*\\b(appointment|booking|visit)\\b", "i"),
 ]
 
 export function isCancelIntent(message: string): boolean {
@@ -701,6 +704,8 @@ const STATUS_QUESTION_PATTERNS: RegExp[] = [
   /\bhas\s+it\s+been\s+(confirmed|booked)\b/i,
   /\bis\s+my\s+appointment\s+(confirmed|booked)\b/i,
   /\bam\s+i\s+(confirmed|booked)\b/i,
+  /\bwhat'?s\s+my\s+appointment\s+(status|confirmation)\b/i,
+  /\bappointment\s+status\b/i,
 ]
 
 export function isBookingStatusQuestion(message: string): boolean {
