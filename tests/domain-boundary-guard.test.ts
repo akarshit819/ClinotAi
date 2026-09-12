@@ -239,7 +239,7 @@ afterEach(() => {
 // and NOT call the AI provider.
 // ===========================================================================
 describe("Domain boundary guard — OFF_TOPIC refusal", () => {
-  const OFF_TOPIC_REDIRECT = "I'm Clinot, the clinic's virtual receptionist. I can help with appointments, clinic information, doctors, and other clinic-related questions. How can I help you today?"
+  const OFF_TOPIC_REDIRECT = "I'm Clinot, the clinic's virtual assistant. I can help with appointments, clinic information, doctors, services, timings, and other clinic-related questions. How can I help you?"
 
   const offTopicInputs = [
     // Coding requests
@@ -328,19 +328,19 @@ describe("Domain boundary guard — Appointment flows always allowed", () => {
   it("reschedule request → allowed through", async () => {
     const { outbound, aiCallsBefore } = await turn("I want to reschedule my appointment", 1)
     expect(aiCallsDuringTurn(aiCallsBefore)).toBe(0)
-    expect(outbound).not.toBe("I'm Clinot, the clinic's virtual receptionist. I can help with appointments, clinic information, doctors, and other clinic-related questions. How can I help you today?")
+    expect(outbound).not.toBe("I'm Clinot, the clinic's virtual assistant. I can help with appointments, clinic information, doctors, services, timings, and other clinic-related questions. How can I help you?")
   })
 
   it("cancel request → allowed through", async () => {
     const { outbound, aiCallsBefore } = await turn("Cancel my appointment", 1)
     expect(aiCallsDuringTurn(aiCallsBefore)).toBe(0)
-    expect(outbound).not.toBe("I'm Clinot, the clinic's virtual receptionist. I can help with appointments, clinic information, doctors, and other clinic-related questions. How can I help you today?")
+    expect(outbound).not.toBe("I'm Clinot, the clinic's virtual assistant. I can help with appointments, clinic information, doctors, services, timings, and other clinic-related questions. How can I help you?")
   })
 
   it("appointment status check → allowed through", async () => {
     const { outbound, aiCallsBefore } = await turn("What's my appointment status?", 1)
     expect(aiCallsDuringTurn(aiCallsBefore)).toBe(0)
-    expect(outbound).not.toBe("I'm Clinot, the clinic's virtual receptionist. I can help with appointments, clinic information, doctors, and other clinic-related questions. How can I help you today?")
+    expect(outbound).not.toBe("I'm Clinot, the clinic's virtual assistant. I can help with appointments, clinic information, doctors, services, timings, and other clinic-related questions. How can I help you?")
   })
 })
 
@@ -366,7 +366,7 @@ describe("Domain boundary guard — Clinic queries allowed", () => {
     it(`allows "${input}" → reaches AI/fallback (not blocked)`, async () => {
       const { outbound, aiCallsBefore } = await turn(input, 1)
       // Should NOT be the off-topic redirect
-      expect(outbound).not.toBe("I'm Clinot, the clinic's virtual receptionist. I can help with appointments, clinic information, doctors, and other clinic-related questions. How can I help you today?")
+      expect(outbound).not.toBe("I'm Clinot, the clinic's virtual assistant. I can help with appointments, clinic information, doctors, services, timings, and other clinic-related questions. How can I help you?")
       // Should reach provider (for AI-path) or fallback
       // Note: some may hit fallback directly (0 AI calls) but that's fine —
       // the key is they're NOT blocked by the domain guard
@@ -397,7 +397,7 @@ describe("Domain boundary guard — Prompt injection hardened", () => {
     it(`blocks injection: "${input}"`, async () => {
       const { outbound, aiCallsBefore } = await turn(input, 1)
       expect(aiCallsDuringTurn(aiCallsBefore)).toBe(0)
-      expect(outbound).toBe("I'm Clinot, the clinic's virtual receptionist. I can help with appointments, clinic information, doctors, and other clinic-related questions. How can I help you today?")
+      expect(outbound).toBe("I'm Clinot, the clinic's virtual assistant. I can help with appointments, clinic information, doctors, services, timings, and other clinic-related questions. How can I help you?")
     })
   }
 })
@@ -427,7 +427,7 @@ describe("Domain boundary guard — System prompt extraction blocked", () => {
     it(`blocks extraction: "${input}"`, async () => {
       const { outbound, aiCallsBefore } = await turn(input, 1)
       expect(aiCallsDuringTurn(aiCallsBefore)).toBe(0)
-      expect(outbound).toBe("I'm Clinot, the clinic's virtual receptionist. I can help with appointments, clinic information, doctors, and other clinic-related questions. How can I help you today?")
+      expect(outbound).toBe("I'm Clinot, the clinic's virtual assistant. I can help with appointments, clinic information, doctors, services, timings, and other clinic-related questions. How can I help you?")
     })
   }
 })

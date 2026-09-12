@@ -38,6 +38,7 @@ import {
   type ExpectedField,
 } from "./appointment-state"
 import { logger } from "@/lib/logger"
+import { isClinotAllowedText } from "@/lib/ai/clinot-domain"
 
 export type Route =
   | "EMERGENCY"
@@ -138,43 +139,6 @@ const GREETING_PATTERNS: RegExp[] = [
   /^(ok|okay|sure|alright|fine|cool|great|awesome|got\s+it)\b/i,
 ]
 
-// OFF_TOPIC patterns — must be checked AFTER appointment/emergency
-// routes but BEFORE GENERAL fallback. These mirror the guardrails
-// OFF_TOPIC_PATTERNS but can be more context-aware since we have
-// the full classifier here.
-const OFF_TOPIC_PATTERNS: RegExp[] = [
-  // Coding / programming
-  /\b(write|create|generate|code|program|script|function|algorithm)\s+(code|program|script|function|algorithm|a\s+\w+\s+(in|for|using)\s+\w+)/i,
-  /\b(teach|show|explain)\s+me\s+(how\s+to\s+)?(code|program|script|javascript|python|java|c\+\+|c#|ruby|go|rust|php|sql|html|css|react|vue|angular|node|express|django|flask|spring)/i,
-  /\b(how\s+do\s+I|how\s+to)\s+(write|code|create|build|make)\s+(a\s+)?(program|script|function|app|website|api|component)/i,
-  /\b(python|javascript|java|c\+\+|c#|ruby|go|rust|php|sql|html|css|react|vue|angular|node|express|django|flask|spring)\s+(code|program|script|tutorial|example)/i,
-  /\b(for\s+loop|while\s+loop|if\s+statement|async|await|promise|callback|regex|api|endpoint|database|query|sql)\b/i,
-
-  // Prompt injection / role override
-  /\b(ignore|forget|disregard|override)\s+(previous|all|your)\s+(instructions|prompts|rules|directives)/i,
-  /\b(you\s+are\s+now|act\s+as|pretend\s+to\s+be|roleplay\s+as|simulate\s+being)\s+(a\s+)?(programmer|coder|developer|software\s+engineer|assistant|ai|bot)/i,
-  /\b(new\s+(instructions|rules|role|prompt):|system\s+prompt:)/i,
-  /\b(stop\s+being|forget\s+you\s+are|no\s+longer\s+a)\s+(receptionist|clinot)/i,
-
-  // System prompt / architecture extraction
-  /\b(what\s+(is|are)\s+your\s+(system\s+)?(prompt|instructions|initial\s+instructions))\b/i,
-  /\b(show|print|display|output|reveal|tell\s+me)\s+(your\s+)?(system\s+)?(prompt|instructions|message)\b/i,
-  /\b(what\s+(model|llm|architecture)\s+(are\s+you|powers\s+you|do\s+you\s+use))\b/i,
-  /\b(are\s+you\s+(gpt|claude|gemini|llama|mistral))\b/i,
-  /\b(who\s+(created|made|trained)\s+you)\b/i,
-  /\b(what\s+is\s+your\s+(training\s+data|knowledge\s+cutoff))\b/i,
-
-  // Essay / general writing
-  /\b(write|compose|create|generate)\s+(an?\s+)?(essay|story|article|email|letter|cover\s+letter|summary|poem|blog\s+post)/i,
-  /\b(summarize|explain)\s+(the\s+)?(book|movie|article|paper|concept|theory)\b/i,
-  /\b(quantum\s+physics|climate\s+change|relativity|evolution)\b/i,
-
-  // Paraphrased coding requests
-  /\b(can\s+you\s+help\s+me\s+with\s+(some\s+)?code)\b/i,
-  /\b(i\s+need\s+help\s+(writing|with)\s+(a\s+)?(script|program|code))\b/i,
-  /\b(give\s+me\s+(some\s+)?code\s+(for|to))\b/i,
-]
-
 const THANKS_PATTERNS: RegExp[] = [
   /\b(thanks|thank\s+you|appreciate|grateful)\b/i,
 ]
@@ -190,6 +154,17 @@ export function classifyRoute(
   draft: AppointmentDraft | null,
 ): RouteDecision {
   const text = message.trim()
+
+  // Empty messages keep the historical GENERAL route (the guardrail
+  // layer owns empty-input handling via "invalid").
+  if (!text) {
+    return {
+      route: "GENERAL",
+      expectedField: draft?.expectedField ?? null,
+      slotAnswerCandidate: false,
+      reason: "empty_message",
+    }
+  }
 
   // LEVEL 1: Emergency always wins.
   if (isEmergencyOverride(text)) {
@@ -262,9 +237,23 @@ export function classifyRoute(
       }
     }
 
-    // Could not classify. Conservative: treat as an interruption
-    // (preserve draft) and let the AI handle it. The AI may ask
-    // for clarification, but the draft survives.
+    // STRICT ALLOWLIST during drafts: an unrelated message must NOT
+    // become an AI interruption. It is OUTSIDE the Clinot domain —
+    // deterministic redirect, draft preserved, provider never called.
+    // Light allowed conversation ("ok", thanks) still falls through
+    // to the AI interruption path with the draft intact.
+    if (!isClinotAllowedText(text)) {
+      return {
+        route: "OFF_TOPIC",
+        expectedField: expected,
+        slotAnswerCandidate: false,
+        reason: "outside_clinot_domain",
+      }
+    }
+
+    // Allowed but unclassified while a draft is active: treat as an
+    // interruption (preserve draft) and let the AI handle it. The AI
+    // may ask for clarification, but the draft survives.
     return {
       route: "APPOINTMENT_INTERRUPTION",
       expectedField: expected,
@@ -329,16 +318,17 @@ export function classifyRoute(
     }
   }
 
-  // LEVEL 5b: Off-topic detection — checked after all clinic-related
-  // routes but before GENERAL fallback. This ensures appointment,
-  // clinic info, insurance, symptoms, greetings all pass through,
-  // while coding/essays/injection/extraction are caught.
-  if (matchesAny(OFF_TOPIC_PATTERNS, text)) {
+  // LEVEL 5b: STRICT POSITIVE ALLOWLIST — checked after all
+  // explicitly allowed clinic routes but before GENERAL. Anything
+  // that does not belong to Clinot's product universe is OUTSIDE:
+  // deterministic redirect, provider never called. Unknown
+  // paraphrases fail CLOSED (denied by default).
+  if (!isClinotAllowedText(text)) {
     return {
       route: "OFF_TOPIC",
       expectedField: null,
       slotAnswerCandidate: false,
-      reason: "off_topic_keyword",
+      reason: "outside_clinot_domain",
     }
   }
 

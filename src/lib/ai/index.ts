@@ -12,6 +12,7 @@ import {
   buildEmergencyResponse,
   buildMedicalQueryResponse,
 } from "./guardrails"
+import { CLINOT_REDIRECT } from "./clinot-domain"
 import { trackAiUsage, estimateTokens } from "./usage"
 import { buildToolDefinitions, executeToolCall, type ToolCall, type ToolResult } from "./tools"
 import type { ChatMessage } from "@/types"
@@ -74,7 +75,7 @@ export async function generateAIResponse(
 
   if (guardrail.action === "off_topic") {
     logger.info("Off-topic detected", { confidence: guardrail.confidence })
-    return guardrail.message || "I'm Clinot, the clinic's virtual receptionist. I can help with appointments, clinic information, doctors, and other clinic-related questions. How can I help you today?"
+    return guardrail.message || CLINOT_REDIRECT
   }
 
   try {
@@ -258,7 +259,7 @@ export async function generateAIResponseWithTools(
 
   if (guardrail.action === "off_topic") {
     trace({ stage: "final", aiCallAttempted: false, fallbackReason: "GUARDRAIL_BLOCKED", deterministicPath: "OFF_TOPIC" })
-    return { response: guardrail.message || "I'm Clinot, the clinic's virtual receptionist. I can help with appointments, clinic information, doctors, and other clinic-related questions. How can I help you today?", toolCalls: [], fallbackReason: "GUARDRAIL_BLOCKED" }
+    return { response: guardrail.message || CLINOT_REDIRECT, toolCalls: [], fallbackReason: "GUARDRAIL_BLOCKED" }
   }
 
   try {

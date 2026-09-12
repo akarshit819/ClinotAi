@@ -30,6 +30,7 @@
 
 import type { ChatMessage } from "@/types"
 import { AI } from "@/config/constants"
+import { isClinotAllowedText } from "@/lib/ai/clinot-domain"
 
 // Default: 4 recent turns. This is enough for a natural follow-up
 // ("How much?" after "I want whitening.") while keeping token usage
@@ -198,9 +199,21 @@ export function buildShortTermContext(input: BuildContextInput): ChatMessage[] {
     (m) => !(typeof m.content === "string" && m.content.startsWith("[context:")),
   )
 
+  // ANTI-POISONING: long outside-domain user messages (e.g., coding
+  // requests, essays, injected instructions) must not become AI
+  // context for future allowed turns. Short slot answers and light
+  // acknowledgements are kept — the length gate (>40 chars) protects
+  // names, dates, and other short appointment values.
+  const unpoisonedHistory = realHistory.filter((m) => {
+    if (m.role !== "user") return true
+    if (typeof m.content !== "string") return true
+    if (m.content.trim().length <= 40) return true
+    return isClinotAllowedText(m.content)
+  })
+
   // 1) Trim to the small window. We take the LAST CONTEXT_WINDOW_SIZE
   //    entries of the recent slice the pipeline already loaded.
-  const trimmedHistory = realHistory.slice(-CONTEXT_WINDOW_SIZE)
+  const trimmedHistory = unpoisonedHistory.slice(-CONTEXT_WINDOW_SIZE)
 
   // 2) Deduplicate consecutive same-role messages. Consecutive turns
   //    from the same role are often short acknowledgements ("ok",

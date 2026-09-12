@@ -67,6 +67,7 @@ import {
   formatSlotInTimezone,
 } from "@/lib/appointment/availability"
 import { classifyRoute, logRouteDecision, isSlotAnswerFor, type Route } from "./route-classifier"
+import { CLINOT_REDIRECT, classifyClinotDomainText } from "@/lib/ai/clinot-domain"
 import {
   buildShortTermContext,
   readContextState,
@@ -105,6 +106,8 @@ function intentHintForRoute(route: Route): string {
       return "asking_to_reschedule"
     case "EMERGENCY":
       return "emergency"
+    case "OFF_TOPIC":
+      return "outside_clinot_domain"
     default:
       return "general_question"
   }
@@ -932,14 +935,41 @@ export async function runAiReceptionist(
     decision.route === "OFF_TOPIC" ? "general_question" :
     "general_question"
 
-  // LEVEL 5a: OFF_TOPIC — return standard redirect, no AI call
+  // LEVEL 5a: OUTSIDE CLINOT DOMAIN — hard server-side boundary.
+  // Deterministic application redirect. The general AI provider is
+  // NEVER called (providerCalled: false). The appointment draft (if
+  // any) is preserved byte-for-byte: we only touch contextState via
+  // the safe merge, which never writes appointmentDraft.
   if (decision.route === "OFF_TOPIC") {
-    logger.info("[RECEPTIONIST] Off-topic — returning redirect", {
+    const domain = classifyClinotDomainText(message.content)
+    const hadActiveDraft = Boolean(existingDraft?.active)
+    logger.info("[CLINOT_DOMAIN_CLASSIFIED]", {
       conversationId: context.conversation.id,
       clinicId: context.clinicId,
+      route: decision.route,
+      domain: domain.domain,
+      allowed: false,
+      reason: decision.reason,
     })
+    logger.info("[CLINOT_DOMAIN_REDIRECT]", {
+      conversationId: context.conversation.id,
+      clinicId: context.clinicId,
+      providerCalled: false,
+      hadActiveDraft,
+    })
+    if (hadActiveDraft) {
+      await prisma.conversation.update({
+        where: { id: context.conversation.id },
+        data: {
+          metadata: updateContextState(context.conversation.metadata, {
+            currentTopic: "general",
+            lastUserIntent: "outside_clinot_domain",
+          }),
+        },
+      })
+    }
     return {
-      response: "I'm Clinot, the clinic's virtual receptionist. I can help with appointments, clinic information, doctors, and other clinic-related questions. How can I help you today?",
+      response: CLINOT_REDIRECT,
       intent: "general_question",
       confidence: 0.95,
       requiresClinic: false,
@@ -982,6 +1012,11 @@ export async function runAiReceptionist(
     clinicId: context.clinicId,
     route: decision.route,
     userMessage: message.content.slice(0, 120),
+  })
+  logger.info("[CLINOT_DOMAIN_ALLOWED]", {
+    conversationId: context.conversation.id,
+    clinicId: context.clinicId,
+    route: decision.route,
   })
 
   // Small context: recent window + topic header (no active draft —

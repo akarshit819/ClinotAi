@@ -51,6 +51,7 @@ function step(label: string, message: string, draft: AppointmentDraft | null): A
     case "CLINIC_INFORMATION":
     case "INSURANCE":
     case "GENERAL":
+    case "OFF_TOPIC":
     case "CANCEL_INTENT":
     case "RESCHEDULE_INTENT":
     case "EMERGENCY":
