@@ -64,7 +64,9 @@ const RECEPTION_PATTERNS: RegExp[] = [
   /^(thanks|thank\s+you|appreciate|grateful|ty|thx)\b/i,
   /^(bye|goodbye|see\s+you|good\s+night|talk\s+to\s+you\s+later|have\s+a\s+great\s+day|talk\s+later|cya)\b/i,
   /^(ok|okay|sure|alright|fine|cool|great|awesome|got\s+it|understood|noted)\b/i,
-  /^(yes|yeah|yep|yup|no|nope|nah)\b[.!?]*$/i,
+  /^(yes|yeah|yep|yup|no|nope|nah|haan|ha|han|ji\s*haan)\b[.!?]*$/i,
+  /\b(yeah|yes|sure|okay|ok|haan)\s+(bro\s+|please\s+)?(do\s+it|book\s+it|confirm(\s+it)?|go\s+ahead)\b/i,
+  /\b(do\s+it|go\s+ahead|confirm\s+it|book\s+it)\b/i,
   // Bare short help-seeking ("help", "help me"). End-anchored so
   // longer requests ("help me with code") stay outside.
   /^(help|help\s+me|help\s+please|need\s+help)\s*[.!?]*$/i,
@@ -79,6 +81,12 @@ const RECEPTION_PATTERNS: RegExp[] = [
 
 const APPOINTMENT_PATTERNS: RegExp[] = [
   /\b(appointment|booking|visit|consult|consultation|checkup|check-up|session|slot)\b/i,
+  // Hinglish & informal appointment booking intents:
+  /\b(appointment|booking|slot|doctor|visit)\b.*\b(book|schedule|krna|karna|chahiye|lena|karana|karwana)\b/i,
+  /\b(book|schedule|krna|karna|chahiye|lena|karana|karwana|want|need|vant|wanna)\b.*\b(appointment|booking|slot|doctor|visit|app|appt)\b/i,
+  /\b(mujhe|hume|humko)\b.*\b(appointment|booking|doctor)\b/i,
+  /\b(appointment\s+chahiye|slot\s+chahiye|doctor\s+chahiye)\b/i,
+  /\b(book\s+app|book\s+appt|wanna\s+book|vant\s+to\s+book|vant\s+appointment)\b/i,
   // NOTE: bare "book"/"schedule" alone is NOT allowlisted — "book" is
   // also a noun ("Summarize the book 1984"). The verb sense requires
   // an appointment object. Standalone reschedule/cancel verbs are
@@ -257,6 +265,7 @@ const COMPLAINT_WORDS: readonly string[] = [
   "numb", "numbness", "stiff", "stiffness",
   "discomfort", "injury", "injured",
   "sick", "unwell", "ill",
+  "bad", "terrible", "awful", "weak",
 ]
 const COMPLAINT_VOCAB: ReadonlySet<string> = new Set(COMPLAINT_WORDS)
 
@@ -278,7 +287,7 @@ const BODY_VOCAB: ReadonlySet<string> = new Set(BODY_WORDS)
 // is present — this is what stops random words ("rain" ≈ "pain",
 // "bake" ≈ "back") from becoming health requests.
 const FRAMING_PATTERN =
-  /\b(i\s+have|i've(\s+got)?|i\s+am|i'm|my|suffering\s+from|feeling|feel)\b/
+  /\b(i\s+have|i've(\s+got)?|i\s+am|i'm|my|suffering\s+from|feeling|feel|im)\b/
 
 export interface TypoHealthSignal {
   matched: boolean
@@ -294,21 +303,37 @@ function maxTypoDistance(tokenLength: number): number {
   return tokenLength <= 4 ? 1 : 2
 }
 
+// Known non-medical words that should never match complaint vocabulary
+const NON_COMPLAINT_WORDS = new Set([
+  "training",
+  "model",
+  "architecture",
+  "system",
+  "prompt",
+  "instructions",
+  "llm",
+  "gpt",
+  "created",
+  "trained",
+  "made",
+])
+
 /**
- * Typo-tolerant clinical-intent detection (deterministic, general —
+ * Typo-tolerant clinical-intent detection (deterministic, layered —
  * NOT hardcoded to any single symptom spelling).
  *
- * Rules (conservative, fail-closed):
- *   1. An EXACT complaint token anywhere → health (confidence 1).
- *      ("head pain", "fever", "i have very headache …")
- *   2. Otherwise, a token within a small edit distance of a
- *      vocabulary word counts ONLY with symptom framing
- *      ("i have heache": heache ~ headache d=2 + "i have").
- *      (confidence 0.85)
- *   3. Anything else → no signal. Random words stay outside even
- *      when vaguely similar ("rain" ~ "pain" has no framing).
- *
- * Tokens shorter than 4 chars are never fuzzy-matched.
+ * Layered intelligence rules:
+ *   1. EXACT complaint vocabulary hit anywhere → health (confidence 1).
+ *      ("head pain", "fever", "i have toothache")
+ *   2. BARE COMPLAINT TYPO: long complaint word with edit distance ≤ 2
+ *      ("headche" ≈ headache d=1, "hedache" ≈ headache d=1, "toothach" ≈ toothache d=1).
+ *      Doesn't require framing because "headche" is unequivocally a symptom.
+ *   3. BODY + COMPLAINT PAIR (exact or fuzzy d ≤ 1):
+ *      ("teeh pain" ≈ teeth+pain, "kne pain" ≈ knee+pain, "hed pain" ≈ head+pain).
+ *      Pairing a body part with a complaint indicator is high-confidence clinical intent.
+ *   4. FRAMED FUZZY MATCH:
+ *      ("bro im feeling very baf" ≈ bad d=1 with "feeling" framing).
+ *   5. Anything else → no signal. Random words stay outside.
  */
 export function fuzzyHealthSignal(rawText: string): TypoHealthSignal {
   const normalized = normalizeClinotText(rawText)
@@ -316,10 +341,8 @@ export function fuzzyHealthSignal(rawText: string): TypoHealthSignal {
   const tokens = normalized.split(" ").filter((t) => t.length >= 2)
   if (tokens.length === 0) return { matched: false, confidence: 0, matchType: "none" }
 
-  // Dedup without Set iteration (TS target forbids it).
+  // Dedup tokens
   const uniqueTokens = tokens.filter((t, i) => tokens.indexOf(t) === i)
-
-  const tokenSet = new Set(tokens)
 
   // Rule 1: exact complaint vocabulary hit.
   for (let i = 0; i < uniqueTokens.length; i++) {
@@ -329,36 +352,110 @@ export function fuzzyHealthSignal(rawText: string): TypoHealthSignal {
     }
   }
 
-  // Rules 2+: framing-gated fuzzy matching.
-  const framed = FRAMING_PATTERN.test(normalized)
-  if (!framed) return { matched: false, confidence: 0, matchType: "none" }
-
-  // Exact body token + framing ("my head", "head pain" without the
-  // complaint word, "mera head pain" style fragments).
+  // Rule 2: Bare complaint typos for multi-syllable/longer complaint words (length >= 6).
+  // "headche" ~ "headache" (d=1, len 7), "hedache" ~ "headache" (d=1, len 7),
+  // "toothach" ~ "toothache" (d=1, len 8), "migran" ~ "migraine" (d=2, len 6).
   for (let i = 0; i < uniqueTokens.length; i++) {
     const token = uniqueTokens[i]
-    if (BODY_VOCAB.has(token)) {
-      return { matched: true, confidence: 0.9, matchType: "exact", token, vocabWord: token, distance: 0 }
+    if (token.length < 5) continue
+    if (NON_COMPLAINT_WORDS.has(token)) continue
+    for (let c = 0; c < COMPLAINT_WORDS.length; c++) {
+      const word = COMPLAINT_WORDS[c]
+      if (word.length < 6) continue
+      const cap = word.length >= 7 ? 2 : 1
+      if (Math.abs(word.length - token.length) > cap) continue
+      const d = levenshteinDistance(token, word, cap)
+      if (d <= cap && d * 3 <= token.length) {
+        return { matched: true, confidence: 0.95, matchType: "typo_framed", token, vocabWord: word, distance: d }
+      }
     }
   }
 
-  // Fuzzy pass over the union vocabulary.
+  // Rule 3: Body + Complaint combination (exact or fuzzy d <= 1).
+  // Matches "teeh pain", "kne pain", "hed pain", "stomch pain", "bak pain",
+  // "pain in knee", "knee hurts".
+  let matchedBody: { token: string; word: string } | null = null
+  let matchedComplaint: { token: string; word: string } | null = null
+
+  // Common non-body words that should not fuzzy-match body parts
+  const NON_BODY_WORDS = new Set(["car", "carp", "cart", "card", "care", "cars", "cat", "cats"])
+
+  for (let i = 0; i < uniqueTokens.length; i++) {
+    const token = uniqueTokens[i]
+    if (!matchedBody) {
+      if (BODY_VOCAB.has(token)) {
+        matchedBody = { token, word: token }
+      } else if (token.length >= 3 && !NON_BODY_WORDS.has(token)) {
+        for (let b = 0; b < BODY_WORDS.length; b++) {
+          const bw = BODY_WORDS[b]
+          if (Math.abs(bw.length - token.length) <= 1) {
+            const d = levenshteinDistance(token, bw, 1)
+            if (d <= 1) {
+              matchedBody = { token, word: bw }
+              break
+            }
+          }
+        }
+      }
+    }
+    if (!matchedComplaint) {
+      if (COMPLAINT_VOCAB.has(token)) {
+        matchedComplaint = { token, word: token }
+      } else if (token.length >= 3) {
+        for (let c = 0; c < COMPLAINT_WORDS.length; c++) {
+          const cw = COMPLAINT_WORDS[c]
+          if (Math.abs(cw.length - token.length) <= 1) {
+            const d = levenshteinDistance(token, cw, 1)
+            if (d <= 1) {
+              matchedComplaint = { token, word: cw }
+              break
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (matchedBody && matchedComplaint) {
+    return {
+      matched: true,
+      confidence: 0.95,
+      matchType: "exact",
+      token: `${matchedBody.token} ${matchedComplaint.token}`,
+      vocabWord: `${matchedBody.word} ${matchedComplaint.word}`,
+      distance: 0,
+    }
+  }
+
+  // Rule 4: Framing-gated fuzzy matching.
+  // ("i have heache", "my head", "bro im feeling very baf")
+  const framed = FRAMING_PATTERN.test(normalized)
+  if (!framed) return { matched: false, confidence: 0, matchType: "none" }
+
+  // Exact body token + framing ("my head", "i have back")
+  if (matchedBody) {
+    return { matched: true, confidence: 0.9, matchType: "exact", token: matchedBody.token, vocabWord: matchedBody.word, distance: 0 }
+  }
+
+  // Fuzzy pass over the union vocabulary with framing
   const vocabLists = [COMPLAINT_WORDS, BODY_WORDS]
   let best: { token: string; vocabWord: string; distance: number } | null = null
   for (let i = 0; i < uniqueTokens.length; i++) {
     const token = uniqueTokens[i]
-    if (token.length < 4) continue
+    if (token.length < 3) continue
+    if (NON_COMPLAINT_WORDS.has(token)) continue
     const cap = maxTypoDistance(token.length)
     for (let v = 0; v < vocabLists.length; v++) {
       const vocab = vocabLists[v]
+      // Skip fuzzy matching against body parts for known non-body words
+      const isBodyVocab = v === 1
+      if (isBodyVocab && NON_BODY_WORDS.has(token)) continue
       for (let w = 0; w < vocab.length; w++) {
         const word = vocab[w]
         if (Math.abs(word.length - token.length) > cap) continue
         const d = levenshteinDistance(token, word, cap)
         if (d > cap) continue
-        // Ratio guard: the typo must be small relative to the word
-        // ("bake" ~ "back" d=2 on len 4 is too far).
-        if (d * 3 > token.length) continue
+        if (d * 3 > token.length && token.length > 3) continue
         if (!best || d < best.distance) {
           best = { token, vocabWord: word, distance: d }
         }
@@ -410,12 +507,30 @@ export function isClinotAllowedText(text: string): boolean {
   return false
 }
 
+// System prompt / architecture extraction attempts — explicitly blocked
+const EXTRACTION_PATTERNS: RegExp[] = [
+  /\b(what\s+is\s+your\s+(training\s+data|model|architecture|system\s+prompt|instructions))\b/i,
+  /\b(what\s+(model|llm|architecture)\s+(are\s+you|powers\s+you|do\s+you\s+use|runs?\s+you))\b/i,
+  /\b(who\s+(created|trained|made)\s+you)\b/i,
+  /\b(show\s+me\s+your\s+(system\s+prompt|instructions))\b/i,
+  /\b(reveal\s+your\s+(system\s+prompt|instructions))\b/i,
+  /\b(what\s+prompt\s+were\s+you\s+given)\b/i,
+  /\b(display\s+your\s+system\s+message)\b/i,
+  /\b(output\s+your\s+system\s+prompt)\b/i,
+  /\b(tell\s+me\s+your\s+instructions)\b/i,
+  /\b(are\s+you\s+(gpt|claude|gemini|llama))\b/i,
+  /\b(what\s+llm\s+powers\s+you)\b/i,
+]
+
 export function classifyClinotDomainText(text: string): ClinotDomainDecision {
   const trimmed = text.trim()
   if (!trimmed) return { allowed: false, domain: "outside", reason: "empty_message" }
   if (trimmed.length > 2000) return { allowed: false, domain: "outside", reason: "message_too_long" }
   if (matchesAny(EMERGENCY_PATTERNS, trimmed))
     return { allowed: true, domain: "emergency", reason: "emergency_vocabulary" }
+  // Explicitly block system prompt / architecture extraction attempts
+  if (matchesAny(EXTRACTION_PATTERNS, trimmed))
+    return { allowed: false, domain: "outside", reason: "extraction_attempt" }
   if (matchesAny(RECEPTION_PATTERNS, trimmed))
     return { allowed: true, domain: "reception_conversation", reason: "reception_vocabulary" }
   if (matchesAny(APPOINTMENT_PATTERNS, trimmed))

@@ -67,7 +67,7 @@ import {
   formatSlotInTimezone,
 } from "@/lib/appointment/availability"
 import { classifyRoute, logRouteDecision, isSlotAnswerFor, type Route } from "./route-classifier"
-import { CLINOT_REDIRECT, classifyClinotDomainText } from "@/lib/ai/clinot-domain"
+import { CLINOT_REDIRECT, classifyClinotDomainText, normalizeClinotText } from "@/lib/ai/clinot-domain"
 import {
   buildShortTermContext,
   readContextState,
@@ -162,9 +162,25 @@ export async function runAiReceptionist(
   message: IncomingMessage,
   conversationHistory: ChatMessage[] = [],
 ): Promise<{ response: string; intent: Intent; confidence: number; requiresClinic: boolean; responseSource: "AI" | "APPOINTMENT" | "EMERGENCY" | "FALLBACK" | "SYSTEM" }> {
+  const normalized = normalizeClinotText(message.content)
+  logger.info("[MESSAGE_NORMALIZED]", {
+    conversationId: context.conversation.id,
+    clinicId: context.clinicId,
+    rawLength: message.content.length,
+    normalized: normalized.slice(0, 100),
+  })
+
   const existingDraft = readDraftFromMetadata(context.conversation.metadata)
   const decision = classifyRoute(message.content, existingDraft)
   logRouteDecision(decision, context.conversation.id, context.clinicId)
+
+  logger.info("[MESSAGE_INTERPRETED]", {
+    conversationId: context.conversation.id,
+    clinicId: context.clinicId,
+    route: decision.route,
+    reason: decision.reason,
+    expectedField: decision.expectedField,
+  })
 
   // Typo-tolerant routing observability: explains WHY a misspelled
   // message (e.g. "headche") routed as HEALTH_RECEPTIONIST without
@@ -426,6 +442,11 @@ export async function runAiReceptionist(
     }
 
     if (isConfirmationMessage(message.content)) {
+      logger.info("[APPOINTMENT_CONFIRMATION_DETECTED]", {
+        conversationId: context.conversation.id,
+        clinicId: context.clinicId,
+        confirmed: true,
+      })
       logger.info("[APPOINTMENT] APPOINTMENT_CONFIRMATION_REQUESTED", {
         conversationId: context.conversation.id,
         clinicId: context.clinicId,
@@ -520,6 +541,11 @@ export async function runAiReceptionist(
     }
 
     if (isDenialMessage(message.content)) {
+      logger.info("[APPOINTMENT_CONFIRMATION_DETECTED]", {
+        conversationId: context.conversation.id,
+        clinicId: context.clinicId,
+        confirmed: false,
+      })
       const cleared = clearDraft("user_declined")
       await prisma.conversation.update({
         where: { id: context.conversation.id },
@@ -709,14 +735,46 @@ export async function runAiReceptionist(
   // ========================================================================
   if (decision.route === "APPOINTMENT_START") {
     const draft = createFreshDraft()
-    // Auto-fill phone from the WhatsApp sender BEFORE persisting so the
-    // stored draft already carries it (previously it was only set on the
-    // in-memory copy and lost on the next turn).
     const autoPhone = message.from.phone
     if (autoPhone && !draft.patientPhone) {
       draft.patientPhone = autoPhone
       draft.history.push({ field: "patientPhone", value: autoPhone, source: "whatsapp" })
     }
+
+    // Contextual extraction from the opening message:
+    // "Book me for 20 September at 2pm because I have tooth pain"
+    const extracted = extractAllFields(message.content, new Date())
+    logger.info("[APPOINTMENT_FIELDS_EXTRACTED]", {
+      conversationId: context.conversation.id,
+      clinicId: context.clinicId,
+      stage: "appointment_start",
+      extracted,
+    })
+
+    if (extracted.name) {
+      draft.patientName = extracted.name
+      draft.history.push({ field: "patientName", value: extracted.name, source: "user" })
+    }
+    if (extracted.phone) {
+      draft.patientPhone = extracted.phone
+      draft.history.push({ field: "patientPhone", value: extracted.phone, source: "user" })
+    }
+    if (extracted.reason) {
+      draft.reason = extracted.reason
+      draft.history.push({ field: "reason", value: extracted.reason, source: "user" })
+    }
+    if (extracted.preferredDate) {
+      draft.preferredDate = extracted.preferredDate
+      draft.history.push({ field: "preferredDate", value: extracted.preferredDate, source: "user" })
+    }
+    if (extracted.preferredTime) {
+      draft.preferredTime = extracted.preferredTime
+      draft.history.push({ field: "preferredTime", value: extracted.preferredTime, source: "user" })
+    }
+
+    draft.expectedField = nextMissingField(draft)
+    draft.status = draft.expectedField ? "collecting" : "ready"
+
     await prisma.conversation.update({
       where: { id: context.conversation.id },
       data: {
@@ -730,14 +788,35 @@ export async function runAiReceptionist(
         summary: message.content.slice(0, 200),
       },
     })
-    logger.info("[APPOINTMENT] APPOINTMENT_DRAFT_UPDATED (activated)", {
+
+    logger.info("[APPOINTMENT_DRAFT_UPDATED]", {
       conversationId: context.conversation.id,
       clinicId: context.clinicId,
+      status: draft.status,
+      expectedField: draft.expectedField,
       phoneAutoFilled: Boolean(autoPhone),
     })
-    // The first prompt is always the name.
+
+    logger.info("[APPOINTMENT_NEXT_ACTION]", {
+      conversationId: context.conversation.id,
+      clinicId: context.clinicId,
+      action: draft.expectedField ? `ask_${draft.expectedField}` : "request_confirmation",
+      expectedField: draft.expectedField,
+    })
+
+    if (!draft.expectedField && isDraftReady(draft)) {
+      return {
+        response: buildConfirmationSummary(draft),
+        intent: "appointment",
+        confidence: 0.95,
+        requiresClinic: false,
+        responseSource: "APPOINTMENT",
+      }
+    }
+
+    const nextPrompt = buildPrompt(draft, draft.expectedField)
     return {
-      response: "Sure, I can help you book an appointment. What's your full name?",
+      response: nextPrompt || "Sure, I can help you book an appointment. What's your full name?",
       intent: "appointment",
       confidence: 0.95,
       requiresClinic: false,
@@ -767,6 +846,32 @@ export async function runAiReceptionist(
       hasReason: Boolean(turn.draft.reason),
       hasDate: Boolean(turn.draft.preferredDate),
       hasTime: Boolean(turn.draft.preferredTime),
+      expectedField: turn.draft.expectedField,
+    })
+
+    logger.info("[APPOINTMENT_FIELDS_EXTRACTED]", {
+      conversationId: context.conversation.id,
+      clinicId: context.clinicId,
+      stage: "slot_answer",
+      hasName: Boolean(turn.draft.patientName),
+      hasPhone: Boolean(turn.draft.patientPhone),
+      hasReason: Boolean(turn.draft.reason),
+      hasDate: Boolean(turn.draft.preferredDate),
+      hasTime: Boolean(turn.draft.preferredTime),
+    })
+
+    logger.info("[APPOINTMENT_DRAFT_UPDATED]", {
+      conversationId: context.conversation.id,
+      clinicId: context.clinicId,
+      status: turn.draft.status,
+      expectedField: turn.draft.expectedField,
+      ready: turn.isComplete,
+    })
+
+    logger.info("[APPOINTMENT_NEXT_ACTION]", {
+      conversationId: context.conversation.id,
+      clinicId: context.clinicId,
+      action: turn.isComplete ? "request_confirmation" : `ask_${turn.draft.expectedField}`,
       expectedField: turn.draft.expectedField,
     })
 
@@ -1024,6 +1129,51 @@ export async function runAiReceptionist(
     }
   }
 
+  // LEVEL 5d: NATURAL GREETING STRATEGY
+  const isGreeting = /^(hi|hello|hey|hola|namaste|good\s+(morning|afternoon|evening)|greetings|howdy)\b/i.test(message.content.trim())
+  if (decision.route === "GENERAL" && isGreeting) {
+    const isNewConversation = conversationHistory.length === 0
+    if (isNewConversation) {
+      const clinicName = context.clinic.name || "our clinic"
+      const welcome = `Hi! 👋 Welcome to ${clinicName}. I'm Clinot, your virtual assistant. I can help you book an appointment, check clinic information, and guide you to the right next step. How can I help you today?`
+      await prisma.conversation.update({
+        where: { id: context.conversation.id },
+        data: {
+          metadata: updateContextState(context.conversation.metadata, {
+            currentTopic: "general",
+            lastUserIntent: "greeting",
+          }),
+        },
+      })
+      return {
+        response: welcome,
+        intent: "general_question",
+        confidence: 0.95,
+        requiresClinic: false,
+        responseSource: "SYSTEM",
+      }
+    } else {
+      const patientName = message.from.name ? ` ${message.from.name}` : ""
+      const returningGreeting = `Hi${patientName}! 👋 How can I help you today?`
+      await prisma.conversation.update({
+        where: { id: context.conversation.id },
+        data: {
+          metadata: updateContextState(context.conversation.metadata, {
+            currentTopic: "general",
+            lastUserIntent: "greeting",
+          }),
+        },
+      })
+      return {
+        response: returningGreeting,
+        intent: "general_question",
+        confidence: 0.95,
+        requiresClinic: false,
+        responseSource: "SYSTEM",
+      }
+    }
+  }
+
   logger.info("[RECEPTIONIST] Normal flow", {
     conversationId: context.conversation.id,
     clinicId: context.clinicId,
@@ -1063,9 +1213,11 @@ export async function runAiReceptionist(
   const hadAiResponse = Boolean(aiResult.response && aiResult.response.trim()) && !aiResult.fallbackReason
   let response = aiResult.response
   if (!aiResult.response || !aiResult.response.trim()) {
-    // Empty AI response. Do NOT pretend an appointment is being
-    // started. Fall back to a generic clarification.
-    response = "I'm here to help with appointments and clinic questions. Could you please provide more details?"
+    if (decision.route === "MEDICAL_SYMPTOM") {
+      response = "I'm sorry to hear you're experiencing discomfort. While I cannot provide medical advice or a diagnosis as a receptionist, our clinic doctors can evaluate your symptoms in person. Would you like to schedule an appointment?"
+    } else {
+      response = "I'm here to help with appointments and clinic questions. Could you please provide more details?"
+    }
   }
 
   // Persist the new currentTopic / lastUserIntent for the next turn.

@@ -34,6 +34,7 @@ import {
   isEmergencyOverride,
   isFlowCancel,
   nextMissingField,
+  extractPhone,
   type AppointmentDraft,
   type ExpectedField,
 } from "./appointment-state"
@@ -223,7 +224,16 @@ export function classifyRoute(
   // EVERY message was treated as a slot answer.
   if (draft && draft.active) {
     const expected = draft.expectedField ?? nextMissingField(draft)
-    const looksLikeSlotAnswer = isSlotAnswerFor(text, expected, draft)
+    let looksLikeSlotAnswer = isSlotAnswerFor(text, expected, draft)
+
+    // Contextual multi-field or explicit appointment field provision:
+    // If the message carries unambiguous date, time, or phone while a draft is active,
+    // and is not a clinic question/interruption, treat it as a slot answer so the draft absorbs it.
+    if (!looksLikeSlotAnswer && !classifyInterruption(text)) {
+      if (hasDateIntent(text) || hasTimeIntent(text) || Boolean(extractPhone(text))) {
+        looksLikeSlotAnswer = true
+      }
+    }
 
     if (looksLikeSlotAnswer) {
       return {
@@ -503,17 +513,16 @@ function looksLikePhoneAnswer(text: string): boolean {
 }
 
 function looksLikeReasonAnswer(text: string): boolean {
-  const lower = text.toLowerCase()
+  const lower = text.toLowerCase().trim()
   // Explicit "I have ..." / "for ..." starters are strong reason
-  // signals. Anything longer than a few words that is NOT a date,
-  // time, phone, or location question is a reason candidate.
+  // signals.
   if (/\b(i\s+have|i've|i\s+am|i'm|it's|for|because|since|due\s+to)\b/i.test(lower)) {
     return true
   }
-  // Must contain at least one non-trivial word and not be a question
-  // about location/hours/insurance.
-  if (text.split(/\s+/).length < 2) return false
+  // Must contain at least two characters, no question marks, and not be a question word.
+  if (lower.length < 2) return false
   if (/[?]/.test(text)) return false
+  if (/^(what|where|when|how|who|is|are|do|does|can|could|why)\b/i.test(lower)) return false
   // If it looks like a date or time, it's not a reason.
   if (hasDateIntent(text) || hasTimeIntent(text)) return false
   // If it looks like a clinic-information question, it's not a reason.

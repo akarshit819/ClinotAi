@@ -58,10 +58,30 @@ const APPOINTMENT_START_PATTERNS: RegExp[] = [
 export function isAppointmentStart(message: string): boolean {
   const lower = message.toLowerCase().trim()
   if (!lower) return false
-  // Length guard: very short messages are unlikely to be a real
-  // booking request. "ok" / "no" / "yes" should not activate.
-  if (lower.length < 5) return false
-  return APPOINTMENT_START_PATTERNS.some((re) => re.test(lower))
+  if (lower.length < 4) return false
+
+  // Direct check against patterns
+  if (APPOINTMENT_START_PATTERNS.some((re) => re.test(lower))) return true
+
+  // Normalization for common typos & informal variants:
+  // "vant" -> "want", "wanna" -> "want to", "app" / "appt" -> "appointment"
+  const normalized = lower
+    .replace(/\bvant\b/g, "want")
+    .replace(/\bwanna\b/g, "want to")
+    .replace(/\b(app|appt)\b/g, "appointment")
+
+  if (APPOINTMENT_START_PATTERNS.some((re) => re.test(normalized))) return true
+
+  // Hinglish and informal booking intents:
+  // "appointment book krna hai", "appointment chahiye", "mujhe appointment chahiye"
+  if (/\b(appointment|booking|slot|doctor)\b.*\b(book|schedule|krna|karna|chahiye|lena|karana|karwana)\b/i.test(lower)) return true
+  if (/\b(mujhe|hume|humko)\b.*\b(appointment|booking|doctor)\b/i.test(lower)) return true
+  if (/\b(appointment\s+chahiye|slot\s+chahiye|doctor\s+chahiye)\b/i.test(lower)) return true
+  if (/\b(book|schedule)\s+(appointment|slot|booking)\b/i.test(normalized)) return true
+  if (/\b(want|need)\s+to\s+book\b/i.test(normalized)) return true
+  if (/\b(want|need)\s+(an?\s+)?appointment\b/i.test(normalized)) return true
+
+  return false
 }
 
 // === Cancellation / rescheduling ==========================================
@@ -217,6 +237,14 @@ export function processSlotAnswer(
     if (!draft.reason || draft.expectedField === "reason") {
       draft.reason = extracted.reason
       draft.history.push({ field: "reason", value: extracted.reason, source: "user" })
+    }
+  } else if (draft.expectedField === "reason") {
+    // Context-aware fallback: the receptionist explicitly asked for the visit reason.
+    // Accept any plausible text answer (e.g. single-word "toothache", "checkup", or typo "teeh pain").
+    const trimmed = message.trim()
+    if (trimmed.length >= 2 && !extractDate(trimmed, now) && !extractTime(trimmed) && !extractPhone(trimmed) && !/[?]/.test(trimmed)) {
+      draft.reason = trimmed
+      draft.history.push({ field: "reason", value: trimmed, source: "user" })
     }
   }
   // Date/time: an EXPLICITLY present value ALWAYS replaces a stale one,
@@ -528,7 +556,18 @@ export function extractDate(line: string, now: Date): string | undefined {
     const b = parseInt(numeric[2], 10)
     let year = numeric[3] ? parseInt(numeric[3], 10) : undefined
     if (year !== undefined && year < 100) year += 2000
-    if (a >= 1 && a <= 12 && b >= 1 && b <= 31) return buildCalendarDate(now, a, b, year)
+    // DD/MM or DD-MM when a > 12 (e.g. 20/09, 20-09)
+    if (a > 12 && a <= 31 && b >= 1 && b <= 12) {
+      return buildCalendarDate(now, b, a, year)
+    }
+    // MM/DD or MM-DD when b > 12
+    if (b > 12 && b <= 31 && a >= 1 && a <= 12) {
+      return buildCalendarDate(now, a, b, year)
+    }
+    // Default when both <= 12: assume MM/DD or standard format
+    if (a >= 1 && a <= 12 && b >= 1 && b <= 31) {
+      return buildCalendarDate(now, a, b, year)
+    }
   }
 
   return undefined
@@ -640,8 +679,10 @@ function nextWeekday(now: Date, target: number, wantNext: boolean): Date {
 // to the generic AI flow.
 
 const CONFIRM_PATTERNS: RegExp[] = [
-  /^(yes|yeah|yep|yup|sure|ok|okay|okay\s+confirm|confirm|confirmed|yes\s+confirm|confirm\s+(it|this|that|appointment|my\s+appointment)|book\s+it|book\s+this|book\s+my\s+appointment|please\s+confirm|please\s+book|go\s+ahead|do\s+it|looks\s+good|that'?s\s+(correct|right|good|fine)|correct|right)\b[.!?]*$/i,
-  /\b(yes[,\s]+confirm|confirm\s+my\s+appointment|yes[,\s]+book\s+it|yes[,\s]+please)\b/i,
+  /^(yes|yeah|yep|yup|sure|ok|okay|okay\s+confirm|confirm|confirmed|yes\s+confirm|confirm\s+(it|this|that|appointment|my\s+appointment)|book\s+it|book\s+this|book\s+my\s+appointment|please\s+confirm|please\s+book|go\s+ahead|do\s+it|looks\s+good|that'?s\s+(correct|right|good|fine)|correct|right|haan|ha|han|ji\s*haan)\b[.!?]*$/i,
+  /\b(yes[,\s]+confirm|confirm\s+my\s+appointment|yes[,\s]+book\s+it|yes[,\s]+please|please\s+confirm|please\s+book|confirm\s+it|book\s+it)\b/i,
+  /\b(yeah|yes|sure|okay|ok|haan)\s+(bro\s+|please\s+)?(do\s+it|book\s+it|confirm(\s+it)?|go\s+ahead)\b/i,
+  /\b(do\s+it|go\s+ahead)\b/i,
 ]
 
 export function isConfirmationMessage(message: string): boolean {
@@ -651,12 +692,13 @@ export function isConfirmationMessage(message: string): boolean {
 }
 
 const DENY_PATTERNS: RegExp[] = [
-  /^(no|nope|nah|not\s+yet|don'?t(\s+book|\s+confirm)?|stop|cancel\s+(it|this|that)|never\s*mind|forget\s+it|nvm)\b[.!]*$/i,
+  /^(no|nope|nah|not\s+yet|not\s+now|don'?t(\s+book|\s+confirm)?|stop|cancel(\s+(it|this|that|my\s+appointment))?|never\s*mind|forget\s+it|nvm|wait|change\s+it|nahi|na)\b[.!?]*$/i,
+  /\b(don'?t\s+book|cancel\s+(it|this|my\s+appointment)|do\s+not\s+book|not\s+now|change\s+it|wait)\b/i,
 ]
 
 export function isDenialMessage(message: string): boolean {
   const text = message.trim()
-  if (!text || text.length > 60) return false
+  if (!text || text.length > 80) return false
   return DENY_PATTERNS.some((re) => re.test(text))
 }
 
@@ -668,8 +710,8 @@ export function isDenialMessage(message: string): boolean {
 const CHOOSE_FOR_ME_PATTERNS: RegExp[] = [
   /\btake\s+(it\s+)?according\s+to\s+yourself\b/i,
   /\b(you\s+(choose|decide|pick)|choose\s+for\s+me|decide\s+for\s+me|pick\s+for\s+me)\b/i,
-  /\b(any\s+(available\s+)?time|whatever(\s+is)?\s+(available|free)|your\s+choice|you\s+decide)\b/i,
-  /\b(earliest\s+available|first\s+available|soonest\s+available)\b/i,
+  /\b(any\s+(available\s+)?time|whatever(\s+is)?\s+(available|free)|your\s+choice|you\s+decide|whatever\s+time)\b/i,
+  /\b(earliest\s+available|first\s+available|soonest\s+available|choose\s+a\s+good\s+time|pick\s+a\s+good\s+time)\b/i,
 ]
 
 export function isChooseForMeMessage(message: string): boolean {
@@ -777,31 +819,32 @@ export function formatTimeHuman(time24: string): string {
 }
 
 export function buildConfirmationSummary(draft: AppointmentDraft): string {
+  const firstName = draft.patientName?.split(/\s+/)[0]
+  const prefix = firstName ? `Perfect, ${firstName}. Here are your appointment details:` : "Perfect. Here are your appointment details:"
   const lines = [
-    "Perfect. I have:",
+    prefix,
     "",
-    `Date: ${draft.preferredDate ? formatDateHumanLong(draft.preferredDate) : "—"}`,
-    `Time: ${draft.preferredTime ? formatTimeHuman(draft.preferredTime) : "—"}`,
+    `📅 Date: ${draft.preferredDate ? formatDateHuman(draft.preferredDate) : "—"}`,
+    `🕑 Time: ${draft.preferredTime ? formatTimeHuman(draft.preferredTime) : "—"}`,
   ]
-  if (draft.patientName) lines.push(`Name: ${draft.patientName}`)
-  if (draft.patientPhone) lines.push(`Phone: ${draft.patientPhone}`)
-  if (draft.reason) lines.push(`Reason: ${draft.reason}`)
+  if (draft.patientName) lines.push(`👤 Name: ${draft.patientName}`)
+  if (draft.patientPhone) lines.push(`📞 Phone: ${draft.patientPhone}`)
+  if (draft.reason) lines.push(`🩺 Reason: ${draft.reason}`)
   lines.push("", "Would you like me to confirm this appointment?")
   return lines.join("\n")
 }
 
-export function buildBookingConfirmation(draft: AppointmentDraft): string {
-  // Sent ONLY after the database write is verified. Structured lines so
-  // the patient can scan date/time at a glance.
+export function buildBookingConfirmation(draft: AppointmentDraft, clinicName?: string): string {
+  const name = clinicName || "the clinic"
   const lines = [
-    "Your appointment has been confirmed.",
+    "🎉 Your appointment has been confirmed!",
     "",
-    `Date: ${draft.preferredDate ? formatDateHuman(draft.preferredDate) : "—"}`,
-    `Time: ${draft.preferredTime ? formatTimeHuman(draft.preferredTime) : "—"}`,
-    `Patient: ${draft.patientName || "—"}`,
+    `📅 Date: ${draft.preferredDate ? formatDateHuman(draft.preferredDate) : "—"}`,
+    `🕑 Time: ${draft.preferredTime ? formatTimeHuman(draft.preferredTime) : "—"}`,
+    `👤 Patient: ${draft.patientName || "—"}`,
   ]
-  if (draft.reason) lines.push(`Reason: ${draft.reason}`)
-  lines.push("", "We look forward to seeing you.")
+  if (draft.reason) lines.push(`🩺 Reason: ${draft.reason}`)
+  lines.push("", `We look forward to seeing you at ${name}.`, "If you need to make any changes, just message us here.")
   return lines.join("\n")
 }
 

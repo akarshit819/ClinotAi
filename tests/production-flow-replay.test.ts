@@ -259,7 +259,6 @@ beforeEach(() => {
 // ===========================================================================
 describe("AI-path inputs reach the provider and the AI response reaches WhatsApp", () => {
   const aiInputs = [
-    "hello",
     "I have knee pain",
     "I have stomach pain",
     "I have back pain for two days",
@@ -281,6 +280,14 @@ describe("AI-path inputs reach the provider and the AI response reaches WhatsApp
       expect(outbound).toBe(`AI_REPLY:${input}`)
     })
   }
+})
+
+describe("Greeting handled deterministically (no AI call)", () => {
+  it('"hello" → deterministic response, no AI call', async () => {
+    const { outbound, aiCallsBefore } = await turn("hello", 1)
+    expect(aiCallsDuringTurn(aiCallsBefore)).toBe(0)
+    expect(outbound.length).toBeGreaterThan(0)
+  })
 })
 
 // ===========================================================================
