@@ -61,10 +61,8 @@ export function HeroVisual() {
       {/* Core: the official Clinot mark, glowing */}
       <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hero-enter" style={{ animationDelay: "0.45s" }}>
         <div data-depth="0.35" className="relative">
-          <div className="glass-panel flex h-28 w-28 sm:h-36 sm:w-36 items-center justify-center rounded-[2rem]">
-            <ClinotLogo size={72} priority className="rounded-[24%] shadow-glow-lg" />
-          </div>
-          <div className="glass-panel absolute -bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5">
+          <ClinotLogo size={112} priority className="drop-shadow-[0_0_40px_rgba(37,99,235,0.6)]" />
+          <div className="absolute -bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 bg-white/80 backdrop-blur-sm text-navy-800 shadow-lg">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
             <span className="text-[11px] font-semibold text-navy-800">Clinot AI · Online</span>
           </div>

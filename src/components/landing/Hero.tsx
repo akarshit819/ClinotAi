@@ -31,7 +31,7 @@ export function Hero() {
       <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-8 pb-14 md:pb-20">
           {/* Copy */}
-          <div className="text-center lg:text-left max-w-2xl mx-auto lg:mx-0">
+          <div className="text-center lg:text-left max-w-2xl mx-auto lg:mx-0 order-2 lg:order-1">
             <div className="hero-enter inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/60 py-1.5 pl-1.5 pr-3.5 shadow-sm backdrop-blur-md mb-7" style={{ animationDelay: "0.05s" }}>
               <ClinotLogo size={20} priority />
               <span className="text-xs font-semibold tracking-wide text-navy-700">
@@ -77,7 +77,7 @@ export function Hero() {
           </div>
 
           {/* Visual */}
-          <div className="lg:pl-4">
+          <div className="order-1 lg:order-2">
             <HeroVisual />
           </div>
         </div>

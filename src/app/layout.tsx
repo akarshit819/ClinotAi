@@ -54,8 +54,13 @@ export const metadata: Metadata = {
   },
   robots: { index: true, follow: true },
   icons: {
-    icon: [{ url: "/brand/clinot-logo.png", type: "image/png" }],
-    apple: [{ url: "/brand/clinot-logo.png", type: "image/png" }],
+    icon: [
+      { url: "/brand/clinot-logo.png", type: "image/png", sizes: "192x192" },
+      { url: "/brand/clinot-logo.png", type: "image/png", sizes: "512x512" },
+    ],
+    apple: [{ url: "/brand/clinot-logo.png", type: "image/png", sizes: "180x180" }],
+    shortcut: [{ url: "/brand/clinot-logo.png", type: "image/png", sizes: "192x192" }],
+    other: [{ rel: "icon", url: "/brand/clinot-logo.png", type: "image/png", sizes: "any" }],
   },
   alternates: { canonical: APP_URL },
 }

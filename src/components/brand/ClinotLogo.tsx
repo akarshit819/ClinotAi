@@ -36,11 +36,11 @@ interface ClinotLogoProps {
   className?: string
   /** Above-the-fold brand marks (navbar, hero) should prioritize. */
   priority?: boolean
-  /** Rounded corner treatment. Artwork stays undistorted. */
+  /** Rounded corner treatment. Artwork stays undistorted. Default: none. */
   rounded?: string
 }
 
-export function ClinotLogo({ size = "md", className, priority = false, rounded = "rounded-[24%]" }: ClinotLogoProps) {
+export function ClinotLogo({ size = "md", className, priority = false, rounded }: ClinotLogoProps) {
   const px = typeof size === "number" ? size : PRESET_SIZES[size]
   const [missing, setMissing] = useState(false)
 
@@ -55,7 +55,6 @@ export function ClinotLogo({ size = "md", className, priority = false, rounded =
         style={{ width: px, height: px }}
         className={cn(
           "inline-flex shrink-0 items-center justify-center bg-gradient-to-br from-primary-500 to-primary-700 text-white",
-          rounded,
           className,
         )}
       >
@@ -72,7 +71,7 @@ export function ClinotLogo({ size = "md", className, priority = false, rounded =
       height={px}
       priority={priority}
       onError={() => setMissing(true)}
-      className={cn("shrink-0 select-none", rounded, className)}
+      className={cn("shrink-0 select-none", className)}
       draggable={false}
     />
   )

@@ -87,9 +87,7 @@ export function PublicNavbar() {
       >
         <div className="flex h-14 items-center justify-between">
           <Link href="/" className="flex items-center gap-2.5 group" aria-label="Clinot home">
-            <span className="transition-transform duration-200 group-hover:scale-105 inline-flex">
-              <ClinotLogo size={32} priority className="rounded-lg shadow-glow" />
-            </span>
+            <ClinotLogo size={32} priority />
             <span className="text-base font-bold text-navy-900 tracking-tight">
               Clinot
             </span>

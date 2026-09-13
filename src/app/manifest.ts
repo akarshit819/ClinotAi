@@ -12,7 +12,9 @@ export default function manifest(): MetadataRoute.Manifest {
     orientation: "any",
     categories: ["medical", "healthcare", "productivity"],
     icons: [
-      { src: "/brand/clinot-logo.png", sizes: "any", type: "image/png", purpose: "any" },
+      { src: "/brand/clinot-logo.png", sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: "/brand/clinot-logo.png", sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: "/brand/clinot-logo.png", sizes: "any", type: "image/png", purpose: "maskable" },
     ],
   }
 }
