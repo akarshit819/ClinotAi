@@ -58,7 +58,7 @@ export async function generateFallbackResponse(params: FallbackParams): Promise<
   // not sure I have the exact information" reply. It deliberately
   // makes no diagnosis and offers the two correct next steps.
   if (
-    /\b(pain|pains|hurts?|aching?|aches?|sore|swelling|swollen|fever|feeling\s+sick|feel\s+sick|nausea|dizzy|bleeding|symptom|discomfort|injur(?:y|ed)|stiff)\b/i.test(lower) ||
+    /\b(pain|pains|hurts?|aching?|aches?|headache|headaches|migraine|migraines|toothache|backache|stomachache|earache|sore|swelling|swollen|fever|feeling\s+sick|feel\s+sick|nausea|dizzy|bleeding|symptom|discomfort|injur(?:y|ed)|stiff)\b/i.test(lower) ||
     /\b(my|the)\s+(head|tooth|teeth|gums?|jaw|back|neck|shoulder|knee|elbow|hand|finger|hip|leg|foot|feet|ear|throat|stomach|chest)\b/i.test(lower)
   ) {
     return `I'm sorry to hear you're dealing with that — our team wants to help. While I can't give medical advice myself, our clinicians can properly evaluate what's going on. Would you like me to book an appointment for you? If it's urgent, please call us at **${clinic?.emergencyPhone || phone || "the clinic"}** right away.`

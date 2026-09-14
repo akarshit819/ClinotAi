@@ -343,3 +343,102 @@ describe("TEST 15: structured appointment data enters the appointment flow", () 
     expect(classifyRoute("I have headache", null).route).not.toBe("APPOINTMENT_START")
   })
 })
+
+// ============================================================================
+// TEST 4 (unit): "Yes" while waiting for a name is neither data nor booking
+// ============================================================================
+describe("TEST 4 (unit): 'Yes' while collecting a name", () => {
+  it("leaves the name empty and is not a slot answer", () => {
+    const draft = collectingDraft({ expectedField: "name" })
+    expect(isSlotAnswerFor("Yes", "name", draft)).toBe(false)
+    const result = processSlotAnswer(draft, "Yes", FROM, NOW)
+    expect(result.draft.patientName).toBeUndefined()
+    expect(classifyAppointmentControl("Yes")).toBe("confirm")
+  })
+})
+
+// ============================================================================
+// TEST 6 (unit): "How are you?" never touches the draft
+// ============================================================================
+describe("TEST 6 (unit): unrelated chatter preserves collected fields", () => {
+  it("'How are you?' is not a slot answer for any field", () => {
+    const draft = collectingDraft({ patientName: "Akarshit", expectedField: "phone" })
+    for (const field of ["name", "phone", "reason", "date", "time"] as const) {
+      expect(isSlotAnswerFor("How are you?", field, draft)).toBe(false)
+    }
+    expect(classifyRoute("How are you?", draft).route).not.toBe("APPOINTMENT_SLOT_ANSWER")
+  })
+})
+
+// ============================================================================
+// TEST 7/8 (unit): READY-state correction gating
+// ============================================================================
+describe("TEST 7/8 (unit): single-field correction signals while READY", () => {
+  function readyDraft(): AppointmentDraft {
+    return {
+      active: true,
+      status: "ready",
+      expectedField: null,
+      patientName: "Akarshit",
+      patientPhone: "9643070673",
+      reason: "Headache",
+      preferredDate: "2026-09-20",
+      preferredTime: "14:00",
+      history: [],
+    }
+  }
+
+  it("'Actually make it 4 PM' carries only time evidence", () => {
+    const msg = "Actually make it 4 PM"
+    expect(extractAllFields(msg, NOW).preferredTime).toBe("16:00")
+    expect(isSlotAnswerFor(msg, "time", readyDraft())).toBe(true)
+    expect(isSlotAnswerFor(msg, "name", readyDraft())).toBe(false)
+    expect(isSlotAnswerFor(msg, "reason", readyDraft())).toBe(false)
+  })
+
+  it("'Change date to 21 September' carries only date evidence", () => {
+    const msg = "Change date to 21 September"
+    expect(extractDate(msg, NOW)).toBe("2026-09-21")
+    expect(isSlotAnswerFor(msg, "date", readyDraft())).toBe(true)
+    expect(isSlotAnswerFor(msg, "time", readyDraft())).toBe(false)
+  })
+
+  it("'My name is Rahul' carries only name evidence", () => {
+    const msg = "My name is Rahul"
+    expect(extractAllFields(msg, NOW).name).toBe("Rahul")
+    expect(isSlotAnswerFor(msg, "name", readyDraft())).toBe(true)
+    expect(isSlotAnswerFor(msg, "reason", readyDraft())).toBe(false)
+  })
+})
+
+// ============================================================================
+// TEST 10 (unit): day numbers are never times
+// ============================================================================
+describe("TEST 10 (unit): '12 September 2026 at 4pm'", () => {
+  it("date = 2026-09-12 and time = 16:00 (never 12:00)", () => {
+    expect(extractDate("12 September 2026 at 4pm", NOW)).toBe("2026-09-12")
+    expect(extractTime("12 September 2026 at 4pm")).toBe("16:00")
+  })
+
+  it("other day-first forms separate cleanly too", () => {
+    expect(extractDate("20 September 2026 at 2pm", NOW)).toBe("2026-09-20")
+    expect(extractTime("20 September 2026 at 2pm")).toBe("14:00")
+    expect(extractTime("tomorrow at 3")).toBeUndefined()
+  })
+})
+
+// ============================================================================
+// TEST 11 (unit): typo'd reason is ACCEPTED while collecting (no re-ask loop)
+// ============================================================================
+describe("TEST 11 (unit): 'teeh pain' completes the reason slot", () => {
+  it("reason is stored and collection advances to date", () => {
+    const draft = collectingDraft({
+      patientName: "Akarshit",
+      patientPhone: "15550001111",
+      expectedField: "reason",
+    })
+    const result = processSlotAnswer(draft, "teeh pain", FROM, NOW)
+    expect(result.draft.reason).toBe("teeh pain")
+    expect(result.draft.expectedField).toBe("date")
+  })
+})

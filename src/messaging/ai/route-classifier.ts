@@ -556,6 +556,15 @@ function looksLikeReasonAnswer(text: string): boolean {
   const lower = text.toLowerCase().trim()
   // Control commands are never reasons ("Book" is not a reason).
   if (isControlMessage(text)) return false
+  // A pure identity/phone provision is not a reason ("My name is
+  // Rahul", "my number is ..."). Strip those clauses: only the
+  // REMAINDER can be reason evidence.
+  const remainder = lower
+    .replace(/\b(actually\s+)?my\s+name\s+is\s+[a-z][a-z'\-.]{1,30}(\s+[a-z][a-z'\-.]{1,30}){0,3}/i, " ")
+    .replace(/\b(my\s+(phone|number|cell|mobile)\s+is|phone\s+is)\s*[+\d][\d\s\-().]{5,20}/i, " ")
+    .replace(/^[,\s.]+/, "")
+    .trim()
+  if (!remainder) return false
   // Explicit "I have ..." / "for ..." starters are strong reason
   // signals.
   if (/\b(i\s+have|i've|i\s+am|i'm|it's|for|because|since|due\s+to)\b/i.test(lower)) {

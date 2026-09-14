@@ -16,6 +16,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { processIncomingMessage } from "../src/messaging/pipeline"
+import { CLINOT_REDIRECT } from "../src/lib/ai/clinot-domain"
 import type { IncomingMessage } from "../src/messaging/types"
 
 const bookingState = vi.hoisted(() => ({
@@ -276,5 +277,140 @@ describe("INCIDENT 2: another appointment → bundle → Book this", () => {
     r = await turn("I want another appointment", 4)
     expect(r.aiCalls).toBe(0)
     expect(r.outbound).toMatch(/full name/i)
+  })
+})
+
+// ============================================================================
+// TEST 1/2/3 — each READY confirmation word books with uncorrupted data
+// ============================================================================
+describe("TEST 1/2/3: Confirm/Book/Done/Yes while READY books cleanly", () => {
+  const BUNDLE = "Akarshit Rajput\n9643070673\nHeadache\n20 September 2026 at 4pm"
+
+  async function collectToReady(seqStart: number): Promise<number> {
+    let seq = seqStart
+    let r = await turn("I want to book an appointment", seq++)
+    expect(r.outbound).toMatch(/full name/i)
+    r = await turn(BUNDLE, seq++)
+    expect(r.outbound).toMatch(/Would you like me to confirm/i)
+    return seq
+  }
+
+  for (const word of ["Confirm", "Book", "Done", "Yes"]) {
+    it(`"${word}" while READY books without touching any field`, async () => {
+      const seq = await collectToReady(1)
+      const r = await turn(word, seq)
+      expect(r.aiCalls).toBe(0)
+      expect(r.outbound).toMatch(/confirmed/i)
+      expect(bookingState.calls.length).toBe(1)
+      const booked = bookingState.calls[0].draft as Record<string, unknown>
+      expect(booked.patientName).toBe("Akarshit Rajput")
+      expect(booked.reason).toBe("Headache")
+      expect(booked.preferredDate).toBe("2026-09-20")
+      expect(booked.preferredTime).toBe("16:00")
+    })
+  }
+})
+
+// ============================================================================
+// TEST 4 (pipeline) — "Yes" while waiting for a name re-asks, never books
+// ============================================================================
+describe("TEST 4 (pipeline): 'Yes' while collecting a name", () => {
+  it("does not become the name and does not book", async () => {
+    let r = await turn("I want to book an appointment", 1)
+    expect(r.outbound).toMatch(/full name/i)
+    r = await turn("Yes", 2)
+    expect(r.aiCalls).toBe(0)
+    expect(draft().patientName ?? null).toBeNull()
+    expect(r.outbound).toMatch(/full name/i)
+    expect(bookingState.calls.length).toBe(0)
+  })
+})
+
+// ============================================================================
+// TEST 6 (pipeline) — "How are you?" preserves the draft
+// ============================================================================
+describe("TEST 6 (pipeline): unrelated chatter preserves collected fields", () => {
+  it("'How are you?' leaves the name intact", async () => {
+    await turn("I want to book an appointment", 1)
+    await turn("Akarshit", 2)
+    expect(draft().patientName).toBe("Akarshit")
+    const r = await turn("How are you?", 3)
+    expect(draft().patientName).toBe("Akarshit")
+    expect(r.outbound).toBe(CLINOT_REDIRECT)
+  })
+})
+
+// ============================================================================
+// TEST 7/8 (pipeline) — READY corrections change exactly one field
+// ============================================================================
+describe("TEST 7/8 (pipeline): READY corrections are surgical", () => {
+  const BUNDLE = "Akarshit Rajput\n9643070673\nHeadache\n20 September 2026 at 2pm"
+
+  it("time, then date, then booking carry the corrected values", async () => {
+    await turn("I want to book an appointment", 1)
+    await turn(BUNDLE, 2)
+    expect(draft().preferredTime).toBe("14:00")
+
+    let r = await turn("Actually make it 4 PM", 3)
+    expect(r.aiCalls).toBe(0)
+    expect(bookingState.calls.length).toBe(0)
+    expect(draft().preferredTime).toBe("16:00")
+    expect(draft().preferredDate).toBe("2026-09-20")
+    expect(draft().patientName).toBe("Akarshit Rajput")
+    expect(r.outbound).toMatch(/4:00 PM/)
+
+    r = await turn("Change date to 21 September", 4)
+    expect(r.aiCalls).toBe(0)
+    expect(bookingState.calls.length).toBe(0)
+    expect(draft().preferredDate).toBe("2026-09-21")
+    expect(draft().preferredTime).toBe("16:00")
+
+    r = await turn("Yes", 5)
+    expect(r.aiCalls).toBe(0)
+    expect(r.outbound).toMatch(/confirmed/i)
+    expect(bookingState.calls.length).toBe(1)
+    const booked = bookingState.calls[0].draft as Record<string, unknown>
+    expect(booked.preferredDate).toBe("2026-09-21")
+    expect(booked.preferredTime).toBe("16:00")
+  })
+})
+
+// ============================================================================
+// TEST 15 (pipeline) — repeated confirmations never re-book
+// ============================================================================
+describe("TEST 15 (pipeline): repeated 'Yes' after BOOKED books once", () => {
+  it("second confirmation touches no booking", async () => {
+    await turn("I want to book an appointment", 1)
+    await turn("Akarshit Rajput\n9643070673\nHeadache\n20 September 2026 at 4pm", 2)
+    const r1 = await turn("Yes", 3)
+    expect(r1.outbound).toMatch(/confirmed/i)
+    expect(bookingState.calls.length).toBe(1)
+    const r2 = await turn("Yes", 4)
+    expect(bookingState.calls.length).toBe(1)
+    expect(r2.outbound).not.toMatch(/Your appointment (has been|is already) confirmed/)
+  })
+})
+
+// ============================================================================
+// TEST 16 (pipeline) — out-of-topic code request is redirected, no code
+// ============================================================================
+describe("TEST 16 (pipeline): Python request gets the clinic redirect", () => {
+  it("returns the redirect with zero provider calls", async () => {
+    const r = await turn("Tell me how to code Python", 1)
+    expect(r.aiCalls).toBe(0)
+    expect(r.outbound).toBe(CLINOT_REDIRECT)
+  })
+})
+
+// ============================================================================
+// TEST 17 (pipeline) — symptom gets an empathetic clinic response
+// ============================================================================
+describe("TEST 17 (pipeline): natural symptom message is handled kindly", () => {
+  it("responds empathetically and offers clinic help", async () => {
+    // Provider is stubbed to fail here, so the deterministic medical
+    // sympathy fallback answers — no diagnosis, no redirect spam.
+    const r = await turn("I'm feeling very bad and having headache", 1)
+    expect(r.outbound).toMatch(/sorry to hear/i)
+    expect(r.outbound).toMatch(/appointment/i)
   })
 })
