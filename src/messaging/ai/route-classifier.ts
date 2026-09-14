@@ -33,6 +33,9 @@ import {
   isRescheduleIntent,
   isEmergencyOverride,
   isFlowCancel,
+  isNewAppointmentRequest,
+  isControlMessage,
+  looksLikeAppointmentBundle,
   nextMissingField,
   extractPhone,
   type AppointmentDraft,
@@ -224,6 +227,17 @@ export function classifyRoute(
   // EVERY message was treated as a slot answer.
   if (draft && draft.active) {
     const expected = draft.expectedField ?? nextMissingField(draft)
+    // A new-appointment request always wins over the active draft:
+    // "I want another appointment" starts a FRESH draft instead of
+    // being parsed as a slot value for the old one.
+    if (isNewAppointmentRequest(text)) {
+      return {
+        route: "APPOINTMENT_START",
+        expectedField: expected,
+        slotAnswerCandidate: false,
+        reason: "new_appointment_request",
+      }
+    }
     let looksLikeSlotAnswer = isSlotAnswerFor(text, expected, draft)
 
     // Contextual multi-field or explicit appointment field provision:
@@ -290,6 +304,18 @@ export function classifyRoute(
       expectedField: null,
       slotAnswerCandidate: false,
       reason: "explicit_appointment_intent",
+    }
+  }
+
+  // Structured appointment bundle without a draft (name + phone +
+  // reason + date + time in one message): enter the appointment flow
+  // with all fields extracted — never the generic fallback.
+  if (looksLikeAppointmentBundle(text)) {
+    return {
+      route: "APPOINTMENT_START",
+      expectedField: null,
+      slotAnswerCandidate: false,
+      reason: "appointment_bundle",
     }
   }
 
@@ -423,6 +449,10 @@ export function isSlotAnswerFor(
   if (!expectedField) return false
   const text = message.trim()
   if (!text) return false
+  // ARCHITECTURAL GUARANTEE: control commands are never slot answers.
+  // "Confirm" / "Book" / "Done" / "yes" can never become name, phone,
+  // reason, date, or time.
+  if (isControlMessage(text)) return false
 
   const segments = /[\r\n,;]/.test(text)
     ? text.split(/[\r\n,;]+/).map((s) => s.trim()).filter(Boolean)
@@ -449,6 +479,12 @@ export function isSlotAnswerFor(
 
 function looksLikeNameAnswer(text: string): boolean {
   const lower = text.toLowerCase()
+  // Control commands are never names — checked first so "Confirm",
+  // "Book this", "Done" can never pass the shape checks below.
+  if (isControlMessage(text)) return false
+  if (/\b(book|books|booking|confirm|confirmed|confirming|done|proceed|proceeding|continue|submit|finalize|cancel|cancelling|another|change)\b/i.test(lower)) {
+    return false
+  }
   // Explicit "my name is ..." / "I'm ..." / "this is ..." /
   // "call me ..." / "actually my name is ...". These are strong
   // signals that the user is providing or correcting their name.
@@ -474,11 +510,15 @@ function looksLikeNameAnswer(text: string): boolean {
     "can", "could", "would", "will", "shall", "may", "might", "must",
     "should", "the", "a", "an", "my", "for", "with", "to", "of", "in",
     "i", "you", "we", "it", "they", "he", "she", "me", "us",
+    "have", "has", "had", "am",
     "tomorrow", "today", "yesterday", "morning", "afternoon", "evening",
     "pain", "hurt", "sore", "ache", "fever", "headache", "toothache",
     "phone", "number", "address", "clinic", "doctor", "dentist",
     "located", "directions", "open", "hours", "timings", "insurance",
     "appointment", "booking", "visit", "consultation", "checkup",
+    "book", "confirm", "confirmed", "done", "yes", "yeah", "yep",
+    "ok", "okay", "sure", "proceed", "continue", "submit", "finalize",
+    "cancel", "another", "new", "change",
   ]
   // Strip the "is"/"am" out of the explicit phrase "my name is" /
   // "I am ...": these are sentence verbs, not question words. The
@@ -514,6 +554,8 @@ function looksLikePhoneAnswer(text: string): boolean {
 
 function looksLikeReasonAnswer(text: string): boolean {
   const lower = text.toLowerCase().trim()
+  // Control commands are never reasons ("Book" is not a reason).
+  if (isControlMessage(text)) return false
   // Explicit "I have ..." / "for ..." starters are strong reason
   // signals.
   if (/\b(i\s+have|i've|i\s+am|i'm|it's|for|because|since|due\s+to)\b/i.test(lower)) {

@@ -42,12 +42,15 @@ import {
   isEmergencyOverride,
   isConfirmationMessage,
   isDenialMessage,
+  isNewAppointmentRequest,
+  classifyAppointmentControl,
   isChooseForMeMessage,
   isListTimesMessage,
   isBookingStatusQuestion,
   extractAllFields,
   extractDate,
   extractTime,
+  extractReasonCorrection,
   extractYearCorrection,
   applyYearToDate,
   formatDateHuman,
@@ -157,11 +160,149 @@ function buildSmallContext(params: {
   return { messages, nextMetadata }
 }
 
+type ReceptionistResult = {
+  response: string
+  intent: Intent
+  confidence: number
+  requiresClinic: boolean
+  responseSource: "AI" | "APPOINTMENT" | "EMERGENCY" | "FALLBACK" | "SYSTEM"
+}
+
+/**
+ * Start a FRESH appointment draft (deterministic). Used both for an
+ * explicit APPOINTMENT_START route and for a new-appointment control
+ * request ("another appointment") while a previous draft is active.
+ * The old draft is replaced — the previous booked appointment in the
+ * database is never touched. Every field present in the opening
+ * message is extracted at once (multi-field bundle support).
+ */
+async function handleAppointmentStart(params: {
+  context: Omit<PipelineContext, "aiResponse" | "intent" | "confidence" | "requiresClinic">
+  message: IncomingMessage
+  routeReason: string
+}): Promise<ReceptionistResult> {
+  const { context, message, routeReason } = params
+  const draft = createFreshDraft()
+  const autoPhone = message.from.phone
+  if (autoPhone && !draft.patientPhone) {
+    draft.patientPhone = autoPhone
+    draft.history.push({ field: "patientPhone", value: autoPhone, source: "whatsapp" })
+  }
+
+  // Contextual extraction from the opening message:
+  // "Book me for 20 September at 2pm because I have tooth pain"
+  const extracted = extractAllFields(message.content, new Date())
+  logger.info("[APPOINTMENT_FIELDS_EXTRACTED]", {
+    conversationId: context.conversation.id,
+    clinicId: context.clinicId,
+    stage: "appointment_start",
+    extracted,
+  })
+
+  if (extracted.name) {
+    draft.patientName = extracted.name
+    draft.history.push({ field: "patientName", value: extracted.name, source: "user" })
+  }
+  if (extracted.phone) {
+    draft.patientPhone = extracted.phone
+    draft.history.push({ field: "patientPhone", value: extracted.phone, source: "user" })
+  }
+  if (extracted.reason) {
+    draft.reason = extracted.reason
+    draft.history.push({ field: "reason", value: extracted.reason, source: "user" })
+  }
+  if (extracted.preferredDate) {
+    draft.preferredDate = extracted.preferredDate
+    draft.history.push({ field: "preferredDate", value: extracted.preferredDate, source: "user" })
+  }
+  if (extracted.preferredTime) {
+    draft.preferredTime = extracted.preferredTime
+    draft.history.push({ field: "preferredTime", value: extracted.preferredTime, source: "user" })
+  }
+
+  draft.expectedField = nextMissingField(draft)
+  draft.status = draft.expectedField ? "collecting" : "ready"
+
+  await prisma.conversation.update({
+    where: { id: context.conversation.id },
+    data: {
+      metadata: updateContextState(
+        writeDraftToMetadata(context.conversation.metadata, draft),
+        { currentTopic: "appointment", lastUserIntent: "starting_appointment" },
+      ),
+      intent: "appointment",
+      isEmergency: false,
+      status: "active",
+      summary: message.content.slice(0, 200),
+    },
+  })
+
+  logger.info("[APPOINTMENT] APPOINTMENT_NEW_FLOW_STARTED", {
+    conversationId: context.conversation.id,
+    clinicId: context.clinicId,
+    routeReason,
+    status: draft.status,
+    expectedField: draft.expectedField,
+    phoneAutoFilled: Boolean(autoPhone),
+  })
+
+  logger.info("[APPOINTMENT_DRAFT_UPDATED]", {
+    conversationId: context.conversation.id,
+    clinicId: context.clinicId,
+    status: draft.status,
+    expectedField: draft.expectedField,
+    phoneAutoFilled: Boolean(autoPhone),
+  })
+
+  logger.info("[APPOINTMENT_NEXT_ACTION]", {
+    conversationId: context.conversation.id,
+    clinicId: context.clinicId,
+    action: draft.expectedField ? `ask_${draft.expectedField}` : "request_confirmation",
+    expectedField: draft.expectedField,
+  })
+
+  if (!draft.expectedField && isDraftReady(draft)) {
+    return {
+      response: buildConfirmationSummary(draft),
+      intent: "appointment",
+      confidence: 0.95,
+      requiresClinic: false,
+      responseSource: "APPOINTMENT",
+    }
+  }
+
+  const nextPrompt = buildPrompt(draft, draft.expectedField)
+  return {
+    response: nextPrompt || "Sure, I can help you book an appointment. What's your full name?",
+    intent: "appointment",
+    confidence: 0.95,
+    requiresClinic: false,
+    responseSource: "APPOINTMENT",
+  }
+}
+
+function missingFieldLabel(field: AppointmentDraft["expectedField"]): string {
+  switch (field) {
+    case "name":
+      return "your full name"
+    case "phone":
+      return "a phone number to confirm the appointment"
+    case "reason":
+      return "the reason for your visit"
+    case "date":
+      return "your preferred date"
+    case "time":
+      return "your preferred time"
+    default:
+      return "a few more details"
+  }
+}
+
 export async function runAiReceptionist(
   context: Omit<PipelineContext, "aiResponse" | "intent" | "confidence" | "requiresClinic">,
   message: IncomingMessage,
   conversationHistory: ChatMessage[] = [],
-): Promise<{ response: string; intent: Intent; confidence: number; requiresClinic: boolean; responseSource: "AI" | "APPOINTMENT" | "EMERGENCY" | "FALLBACK" | "SYSTEM" }> {
+): Promise<ReceptionistResult> {
   const normalized = normalizeClinotText(message.content)
   logger.info("[MESSAGE_NORMALIZED]", {
     conversationId: context.conversation.id,
@@ -244,6 +385,84 @@ export async function runAiReceptionist(
       requiresClinic: false,
       responseSource: "APPOINTMENT",
     }
+  }
+
+  // ========================================================================
+  // LEVEL 1.6: APPOINTMENT CONTROL INTENTS (deterministic)
+  //   Control commands are classified BEFORE any slot extraction so
+  //   they can NEVER corrupt draft fields ("Confirm" must never
+  //   become the patient's name, "Book" must never become the
+  //   reason). Priority: new-appointment > denial > confirmation.
+  //   READY drafts fall through to the LEVEL 1.8 confirmation
+  //   branch; COLLECTING drafts are handled here without touching
+  //   any collected field.
+  // ========================================================================
+  if (existingDraft?.active) {
+    const control = classifyAppointmentControl(message.content)
+    if (control) {
+      logger.info("[APPOINTMENT] APPOINTMENT_CONTROL_INTENT", {
+        conversationId: context.conversation.id,
+        clinicId: context.clinicId,
+        control,
+        draftReady: isDraftReady(existingDraft),
+        expectedField: existingDraft.expectedField,
+      })
+    }
+    // A new-appointment request replaces the active draft with a
+    // clean one — even when the old draft is READY. The previously
+    // booked appointment row (if any) is untouched.
+    if (control === "new" || isNewAppointmentRequest(message.content)) {
+      return handleAppointmentStart({ context, message, routeReason: "new_appointment_request" })
+    }
+    const draftReady = isDraftReady(existingDraft)
+    if (control === "deny" && !draftReady) {
+      const cleared = clearDraft("user_declined_collecting")
+      await prisma.conversation.update({
+        where: { id: context.conversation.id },
+        data: {
+          metadata: updateContextState(
+            writeDraftToMetadata(context.conversation.metadata, cleared),
+            { currentTopic: "general", lastUserIntent: "booking_declined" },
+          ),
+        },
+      })
+      logger.info("[APPOINTMENT] APPOINTMENT_CANCELLED_STATE", {
+        conversationId: context.conversation.id,
+        clinicId: context.clinicId,
+        stage: "collecting",
+      })
+      return {
+        response: "No problem, I've cancelled that booking request. How else can I help you today?",
+        intent: "general_question",
+        confidence: 0.9,
+        requiresClinic: false,
+        responseSource: "APPOINTMENT",
+      }
+    }
+    if (control === "confirm" && !draftReady) {
+      // Mid-collection acknowledgement ("yes", "book", "done"):
+      // report real progress and ask for the next missing field.
+      // NO field is modified — this is what prevents the
+      // "Confirm became the name" production incident.
+      logger.info("[APPOINTMENT] APPOINTMENT_FALLBACK_PREVENTED", {
+        conversationId: context.conversation.id,
+        clinicId: context.clinicId,
+        controlMessage: true,
+        expectedField: existingDraft.expectedField,
+      })
+      const firstName = existingDraft.patientName?.split(/\s+/)[0]
+      const nextPrompt = buildPrompt(existingDraft, existingDraft.expectedField)
+      return {
+        response:
+          `We're almost there${firstName ? `, ${firstName}` : ""} — ` +
+          `I still need ${missingFieldLabel(existingDraft.expectedField)}. ${nextPrompt}`,
+        intent: "appointment",
+        confidence: 0.9,
+        requiresClinic: false,
+        responseSource: "APPOINTMENT",
+      }
+    }
+    // READY + confirm/deny falls through to LEVEL 1.8 (booking).
   }
 
   // ========================================================================
@@ -458,6 +677,12 @@ export async function runAiReceptionist(
         whatsappName: message.from.name,
       })
       if (result.ok) {
+        logger.info("[APPOINTMENT] APPOINTMENT_CONFIRMATION_ACCEPTED", {
+          conversationId: context.conversation.id,
+          clinicId: context.clinicId,
+          appointmentId: result.appointmentId,
+          duplicate: Boolean(result.duplicate),
+        })
         const clearedDraft = clearDraft("completed")
         await prisma.conversation.update({
           where: { id: context.conversation.id },
@@ -471,6 +696,11 @@ export async function runAiReceptionist(
             status: "active",
             summary: message.content.slice(0, 200),
           },
+        })
+        logger.info("[APPOINTMENT] APPOINTMENT_BOOKED_STATE", {
+          conversationId: context.conversation.id,
+          clinicId: context.clinicId,
+          appointmentId: result.appointmentId,
         })
         const confirmationText = result.duplicate
           ? [
@@ -560,6 +790,11 @@ export async function runAiReceptionist(
         conversationId: context.conversation.id,
         clinicId: context.clinicId,
       })
+      logger.info("[APPOINTMENT] APPOINTMENT_CANCELLED_STATE", {
+        conversationId: context.conversation.id,
+        clinicId: context.clinicId,
+        stage: "ready",
+      })
       return {
         response: "No problem, I won't book it. How else can I help you today?",
         intent: "general_question",
@@ -574,7 +809,10 @@ export async function runAiReceptionist(
     // Each field is gated on isSlotAnswerFor so side questions ("where
     // are you located?") can NEVER corrupt the draft — extractReason is
     // intentionally permissive and would otherwise claim any sentence.
+    // Reason corrections strip command introducers ("make reason X")
+    // so only the new reason is stored.
     const correction = extractAllFields(message.content, new Date())
+    const correctedReason = extractReasonCorrection(message.content, new Date()) ?? correction.reason
     const corrected: AppointmentDraft = {
       ...existingDraft,
       history: [...existingDraft.history],
@@ -599,12 +837,12 @@ export async function runAiReceptionist(
       changed = true
     }
     if (
-      correction.reason &&
-      correction.reason !== existingDraft.reason &&
+      correctedReason &&
+      correctedReason !== existingDraft.reason &&
       isSlotAnswerFor(message.content, "reason", existingDraft)
     ) {
-      corrected.reason = correction.reason
-      corrected.history.push({ field: "reason", value: correction.reason, source: "user_correction" })
+      corrected.reason = correctedReason
+      corrected.history.push({ field: "reason", value: correctedReason, source: "user_correction" })
       changed = true
     }
     if (
@@ -734,94 +972,7 @@ export async function runAiReceptionist(
   //   The user has EXPLICITLY asked to book. Activate a fresh draft.
   // ========================================================================
   if (decision.route === "APPOINTMENT_START") {
-    const draft = createFreshDraft()
-    const autoPhone = message.from.phone
-    if (autoPhone && !draft.patientPhone) {
-      draft.patientPhone = autoPhone
-      draft.history.push({ field: "patientPhone", value: autoPhone, source: "whatsapp" })
-    }
-
-    // Contextual extraction from the opening message:
-    // "Book me for 20 September at 2pm because I have tooth pain"
-    const extracted = extractAllFields(message.content, new Date())
-    logger.info("[APPOINTMENT_FIELDS_EXTRACTED]", {
-      conversationId: context.conversation.id,
-      clinicId: context.clinicId,
-      stage: "appointment_start",
-      extracted,
-    })
-
-    if (extracted.name) {
-      draft.patientName = extracted.name
-      draft.history.push({ field: "patientName", value: extracted.name, source: "user" })
-    }
-    if (extracted.phone) {
-      draft.patientPhone = extracted.phone
-      draft.history.push({ field: "patientPhone", value: extracted.phone, source: "user" })
-    }
-    if (extracted.reason) {
-      draft.reason = extracted.reason
-      draft.history.push({ field: "reason", value: extracted.reason, source: "user" })
-    }
-    if (extracted.preferredDate) {
-      draft.preferredDate = extracted.preferredDate
-      draft.history.push({ field: "preferredDate", value: extracted.preferredDate, source: "user" })
-    }
-    if (extracted.preferredTime) {
-      draft.preferredTime = extracted.preferredTime
-      draft.history.push({ field: "preferredTime", value: extracted.preferredTime, source: "user" })
-    }
-
-    draft.expectedField = nextMissingField(draft)
-    draft.status = draft.expectedField ? "collecting" : "ready"
-
-    await prisma.conversation.update({
-      where: { id: context.conversation.id },
-      data: {
-        metadata: updateContextState(
-          writeDraftToMetadata(context.conversation.metadata, draft),
-          { currentTopic: "appointment", lastUserIntent: intentHintForRoute(decision.route) },
-        ),
-        intent: "appointment",
-        isEmergency: false,
-        status: "active",
-        summary: message.content.slice(0, 200),
-      },
-    })
-
-    logger.info("[APPOINTMENT_DRAFT_UPDATED]", {
-      conversationId: context.conversation.id,
-      clinicId: context.clinicId,
-      status: draft.status,
-      expectedField: draft.expectedField,
-      phoneAutoFilled: Boolean(autoPhone),
-    })
-
-    logger.info("[APPOINTMENT_NEXT_ACTION]", {
-      conversationId: context.conversation.id,
-      clinicId: context.clinicId,
-      action: draft.expectedField ? `ask_${draft.expectedField}` : "request_confirmation",
-      expectedField: draft.expectedField,
-    })
-
-    if (!draft.expectedField && isDraftReady(draft)) {
-      return {
-        response: buildConfirmationSummary(draft),
-        intent: "appointment",
-        confidence: 0.95,
-        requiresClinic: false,
-        responseSource: "APPOINTMENT",
-      }
-    }
-
-    const nextPrompt = buildPrompt(draft, draft.expectedField)
-    return {
-      response: nextPrompt || "Sure, I can help you book an appointment. What's your full name?",
-      intent: "appointment",
-      confidence: 0.95,
-      requiresClinic: false,
-      responseSource: "APPOINTMENT",
-    }
+    return handleAppointmentStart({ context, message, routeReason: decision.reason })
   }
 
   // ========================================================================

@@ -30,6 +30,7 @@
  */
 
 import type { Intent } from "../types"
+import { fuzzyHealthSignal } from "@/lib/ai/clinot-domain"
 
 // === Activation triggers (EXPLICIT only) ===================================
 // Symptoms are NOT in this list. "I have a headache" never starts
@@ -80,6 +81,12 @@ export function isAppointmentStart(message: string): boolean {
   if (/\b(book|schedule)\s+(appointment|slot|booking)\b/i.test(normalized)) return true
   if (/\b(want|need)\s+to\s+book\b/i.test(normalized)) return true
   if (/\b(want|need)\s+(an?\s+)?appointment\b/i.test(normalized)) return true
+
+  // "another appointment" / "new appointment" / "one more appointment":
+  // the user explicitly wants (another) booking, with or without a verb.
+  // Previously these fell through to the generic AI flow and the next
+  // structured message had no draft — the "generic fallback" incident.
+  if (isNewAppointmentRequest(lower)) return true
 
   return false
 }
@@ -226,11 +233,22 @@ export function processSlotAnswer(
     }
   }
   if (extracted.phone) {
-    if (!draft.patientPhone || draft.expectedField === "phone") {
-      if (draft.patientPhone !== extracted.phone) {
-        draft.patientPhone = extracted.phone
-        draft.history.push({ field: "patientPhone", value: extracted.phone, source: "user" })
-      }
+    // Provenance rule: an EXPLICIT phone in the user message always
+    // beats a WhatsApp-autofilled one (the bundle incident: the user
+    // typed 9643070673 but the draft kept the sender number). A phone
+    // the user explicitly provided earlier stays locked unless the
+    // message carries an explicit correction introducer.
+    const userLockedPhone = draft.history.some(
+      (h) => h.field === "patientPhone" && (h.source === "user" || h.source === "user_correction"),
+    )
+    const hasPhoneIntroducer =
+      /\b(my\s+(phone|number|cell|mobile)\s+is|phone\s+is|actually\s+my\s+number|call\s+me\s+at|reach\s+me\s+at)\b/i.test(message)
+    if (
+      draft.patientPhone !== extracted.phone &&
+      (!draft.patientPhone || draft.expectedField === "phone" || !userLockedPhone || hasPhoneIntroducer)
+    ) {
+      draft.patientPhone = extracted.phone
+      draft.history.push({ field: "patientPhone", value: extracted.phone, source: "user" })
     }
   }
   if (extracted.reason) {
@@ -238,11 +256,19 @@ export function processSlotAnswer(
       draft.reason = extracted.reason
       draft.history.push({ field: "reason", value: extracted.reason, source: "user" })
     }
-  } else if (draft.expectedField === "reason") {
+  } else if (draft.expectedField === "reason" && !isControlMessage(message)) {
     // Context-aware fallback: the receptionist explicitly asked for the visit reason.
     // Accept any plausible text answer (e.g. single-word "toothache", "checkup", or typo "teeh pain").
+    // Control commands and questions are never reasons.
     const trimmed = message.trim()
-    if (trimmed.length >= 2 && !extractDate(trimmed, now) && !extractTime(trimmed) && !extractPhone(trimmed) && !/[?]/.test(trimmed)) {
+    if (
+      trimmed.length >= 2 &&
+      !extractDate(trimmed, now) &&
+      !extractTime(trimmed) &&
+      !extractPhone(trimmed) &&
+      !/[?]/.test(trimmed) &&
+      !/^(what|where|when|how|who|why|is|are|do|does|did|can|could|tell|show)\b/i.test(trimmed)
+    ) {
       draft.reason = trimmed
       draft.history.push({ field: "reason", value: trimmed, source: "user" })
     }
@@ -376,6 +402,30 @@ interface ExtractedFields {
 export function extractAllFields(message: string, now: Date = new Date()): ExtractedFields {
   const out: ExtractedFields = {}
 
+  // Fail closed: a pure control message carries no field evidence.
+  if (isControlMessage(message)) return out
+
+  // Introducer-anchored whole-message extraction: one sentence can
+  // carry several fields ("My name is X and I have headache. ...
+  // My number is ..."). Newline/comma segmentation misses those, so
+  // anchor on the introducer phrases directly. Positive evidence
+  // only — a failed anchor simply leaves the field empty.
+  if (!out.name) {
+    const m = message.match(/\b(?:actually\s+)?my\s+name\s+is\s+([A-Za-z][A-Za-z'\-.]{1,30}(?:\s+[A-Za-z][A-Za-z'\-.]{1,30}){0,3})/i)
+    if (m) {
+      const chunk = m[1].split(/\s+(?:and|for|because|with|who|that|which)\b/i)[0].trim()
+      const name = extractName(chunk)
+      if (name) out.name = name
+    }
+  }
+  if (!out.phone) {
+    const m = message.match(/\b(?:my\s+(?:phone|number|cell|mobile)\s+is|phone\s+is|call\s+me\s+at|reach\s+me\s+at)\s*([+\d][\d\s\-().]{5,20})/i)
+    if (m) {
+      const phone = extractPhone(m[1])
+      if (phone) out.phone = phone
+    }
+  }
+
   // Split on newlines and commas (single-line multi-field messages).
   const segments = message
     .split(/[\r\n,;]+/)
@@ -406,10 +456,59 @@ export function extractAllFields(message: string, now: Date = new Date()): Extra
   }
 
   if (!out.reason) {
-    out.reason = extractReason(message, out)
+    out.reason = extractReason(message, out, now)
   }
 
   return out
+}
+
+export interface AppointmentEvidence {
+  hasName: boolean
+  hasPhone: boolean
+  hasReason: boolean
+  hasDate: boolean
+  hasTime: boolean
+  /** Count of hard evidence fields (phone/date/time). */
+  hardCount: number
+}
+
+/** Count which appointment fields a message carries positive evidence for. */
+export function countAppointmentEvidence(message: string, now: Date = new Date()): AppointmentEvidence {
+  if (isControlMessage(message)) {
+    return { hasName: false, hasPhone: false, hasReason: false, hasDate: false, hasTime: false, hardCount: 0 }
+  }
+  const fields = extractAllFields(message, now)
+  const hasPhone = Boolean(fields.phone)
+  const hasDate = Boolean(fields.preferredDate)
+  const hasTime = Boolean(fields.preferredTime)
+  return {
+    hasName: Boolean(fields.name),
+    hasPhone,
+    hasReason: Boolean(fields.reason),
+    hasDate,
+    hasTime,
+    hardCount: (hasPhone ? 1 : 0) + (hasDate ? 1 : 0) + (hasTime ? 1 : 0),
+  }
+}
+
+/**
+ * True when a message with NO active draft is clearly a structured
+ * appointment bundle (e.g. name + phone + reason + date + time in one
+ * message). Such messages must enter the appointment flow — never the
+ * generic fallback. Conservative by design: requires at least two
+ * hard-evidence fields (phone/date/time), or one hard field plus both
+ * a name and a reason, so pure symptom messages ("I have headache")
+ * never auto-start a booking.
+ */
+export function looksLikeAppointmentBundle(message: string, now: Date = new Date()): boolean {
+  const text = message.trim()
+  if (!text || text.length > 500) return false
+  if (isControlMessage(text)) return false
+  if (isAppointmentStart(text)) return false
+  const ev = countAppointmentEvidence(text, now)
+  if (ev.hardCount >= 2) return true
+  if (ev.hardCount === 1 && ev.hasName && ev.hasReason) return true
+  return false
 }
 
 export function extractPhone(line: string): string | undefined {
@@ -601,8 +700,18 @@ function buildCalendarDate(now: Date, month: number, day: number, year: number |
 export function extractName(line: string): string | undefined {
   const trimmed = line.trim()
   if (trimmed.length < 2 || trimmed.length > 80) return undefined
+  // Control commands are never names ("Confirm", "Done", "Book this").
+  if (isControlMessage(trimmed)) return undefined
   if (/[!?]/.test(trimmed)) return undefined
   if (/\d/.test(trimmed)) return undefined
+  // Symptom-like text is a reason, never a name ("teeh pain",
+  // "headche", "tooth pain") — unless an explicit name introducer
+  // ("my name is ...") proves otherwise.
+  const hasNameIntroducer = /\b(my\s+name\s+is|actually\s+my\s+name\s+is|i\s+am|i'm|this\s+is|call\s+me|it's|its)\b/i.test(trimmed)
+  if (!hasNameIntroducer && fuzzyHealthSignal(trimmed).matched) return undefined
+  // A control verb anywhere means this is a command, not a name
+  // ("Book this" must not become "Book").
+  if (/\b(book|books|booking|confirm|confirmed|confirming|done|proceed|proceeding|continue|submit|finalize|cancel|cancelling|yes|yeah|yep|ok|okay|sure|another|change)\b/i.test(trimmed)) return undefined
   const words = trimmed.split(/\s+/)
   if (words.length < 1 || words.length > 5) return undefined
   const nameShape = /^[A-Za-z][A-Za-z'\-.]{1,30}$/
@@ -619,6 +728,10 @@ export function extractName(line: string): string | undefined {
     "pain", "hurt", "sore", "ache", "fever", "headache", "toothache",
     "name", "phone", "number", "address", "clinic", "dentist",
     "this", "that", "these", "those", "was", "were", "be", "been",
+    "have", "has", "had", "am", "i'm", "it", "its", "it's",
+    "confirm", "confirmed", "done", "yes", "yeah", "yep", "ok", "okay",
+    "sure", "proceed", "continue", "submit", "finalize", "cancel",
+    "another", "new", "change",
   ]
   // Strip out non-name words. "My Name Is Akarshit" → "Akarshit".
   const nameWords = words.filter((w) => !nonNameWords.includes(w.toLowerCase()))
@@ -627,7 +740,9 @@ export function extractName(line: string): string | undefined {
   return nameWords.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ")
 }
 
-function extractReason(message: string, alreadyExtracted?: ExtractedFields): string | undefined {
+function extractReason(message: string, alreadyExtracted?: ExtractedFields, now: Date = new Date()): string | undefined {
+  // Control commands carry no reason ("Book" is not a reason).
+  if (isControlMessage(message)) return undefined
   const extracted = alreadyExtracted || {}
   const segments = message
     .split(/[\r\n,;]+/)
@@ -636,9 +751,12 @@ function extractReason(message: string, alreadyExtracted?: ExtractedFields): str
   const reasonParts: string[] = []
   for (const seg of segments) {
     if (isAppointmentStart(seg)) continue
+    // Control segments are commands, never reasons — drop them so a
+    // mixed message ("Headache. Book it") keeps only real content.
+    if (isControlMessage(seg)) continue
     if (extractPhone(seg)) continue
     if (extractTime(seg)) continue
-    if (extractDate(seg, new Date())) continue
+    if (extractDate(seg, now)) continue
     if (extracted.name) {
       const candidate = extractName(seg)
       if (candidate && candidate === extracted.name) continue
@@ -649,7 +767,27 @@ function extractReason(message: string, alreadyExtracted?: ExtractedFields): str
   if (!cleaned) return undefined
   const finalClean = cleaned.replace(/^[,\-\s]+/, "").trim()
   if (!finalClean) return undefined
+  // A leftover that is itself just a control word is not a reason.
+  if (isControlMessage(finalClean)) return undefined
   return finalClean.length > 200 ? finalClean.slice(0, 200) : finalClean
+}
+
+/**
+ * Reason-only correction while a READY draft awaits confirmation
+ * ("Make reason tooth pain", "change reason to fever", "reason: cold").
+ * Strips the correction introducer so only the new reason is stored —
+ * never the whole command sentence.
+ */
+export function extractReasonCorrection(message: string, now: Date = new Date()): string | undefined {
+  if (isControlMessage(message)) return undefined
+  const stripped = message
+    // Word boundaries on "to"/"as" matter: without them the "to" of
+    // "tooth" is eaten ("Make reason tooth pain" → "oth pain").
+    .replace(/.*?\b(?:make|change|update|set)\s+(?:the\s+|my\s+)?reason\s+(?:\bto\b|\bas\b|:)?\s*/i, "")
+    .replace(/.*?\breason\s*(?:is|:)\s*/i, "")
+    .trim()
+  const source = stripped || message.trim()
+  return extractReason(source, undefined, now)
 }
 
 function isoDate(d: Date): string {
@@ -679,10 +817,13 @@ function nextWeekday(now: Date, target: number, wantNext: boolean): Date {
 // to the generic AI flow.
 
 const CONFIRM_PATTERNS: RegExp[] = [
-  /^(yes|yeah|yep|yup|sure|ok|okay|okay\s+confirm|confirm|confirmed|yes\s+confirm|confirm\s+(it|this|that|appointment|my\s+appointment)|book\s+it|book\s+this|book\s+my\s+appointment|please\s+confirm|please\s+book|go\s+ahead|do\s+it|looks\s+good|that'?s\s+(correct|right|good|fine)|correct|right|haan|ha|han|ji\s*haan)\b[.!?]*$/i,
+  /^(yes|yeah|yep|yup|ya|sure|ok|okay|okay\s+confirm|confirm|confirmed|confirming|yes\s+confirm|confirm\s+(it|this|that|booking|appointment|my\s+appointment)|book|book\s+it|book\s+this|book\s+that|book\s+my\s+appointment|please\s+confirm|please\s+book|go\s+ahead|do\s+it|continue|proceed|submit|finalize|done|all\s+done|looks\s+good|that'?s\s+(it|all|correct|right|good|fine)|correct|right|haan|ha|han|ji\s*haan)\b[.!?]*$/i,
   /\b(yes[,\s]+confirm|confirm\s+my\s+appointment|yes[,\s]+book\s+it|yes[,\s]+please|please\s+confirm|please\s+book|confirm\s+it|book\s+it)\b/i,
   /\b(yeah|yes|sure|okay|ok|haan)\s+(bro\s+|please\s+)?(do\s+it|book\s+it|confirm(\s+it)?|go\s+ahead)\b/i,
   /\b(do\s+it|go\s+ahead)\b/i,
+  // Affirmation + action combos: "yes book", "ok confirm", "sure book it".
+  /^(yes|yeah|yep|ok|okay|sure)\s+(book|confirm|do\s+it|go\s+ahead)(\s+(it|this|that|please))?\b[.!?]*$/i,
+  /\bconfirm\s+(the\s+)?booking\b/i,
 ]
 
 export function isConfirmationMessage(message: string): boolean {
@@ -700,6 +841,86 @@ export function isDenialMessage(message: string): boolean {
   const text = message.trim()
   if (!text || text.length > 80) return false
   return DENY_PATTERNS.some((re) => re.test(text))
+}
+
+// === Conversational control intents ========================================
+// ARCHITECTURAL CONTRACT: control messages are commands, never data.
+// "Confirm" / "Book" / "Done" / "yes" must be classified BEFORE any
+// appointment field extraction runs. They must NEVER overwrite name,
+// phone, reason, date, or time.
+//
+// Priority (evaluated in this order by classifyAppointmentControl):
+//   1. denial / cancel
+//   2. confirmation / book-submit
+//   3. new-appointment request
+
+const NEW_APPOINTMENT_PATTERNS: RegExp[] = [
+  /\b(another|one\s+more|new|second|additional)\s+(appointment|booking|visit|consult|consultation|checkup)\b/i,
+  /\b(book|schedule|need|want|get|have)\b.*\b(another|one\s+more)\s+(appointment|booking|visit|slot)\b/i,
+  /\bschedule\s+another\s+visit\b/i,
+]
+
+export function isNewAppointmentRequest(message: string): boolean {
+  const text = message.trim()
+  if (!text || text.length > 140) return false
+  return NEW_APPOINTMENT_PATTERNS.some((re) => re.test(text))
+}
+
+export type AppointmentControl = "deny" | "confirm" | "new" | null
+
+/**
+ * Classify a message as an appointment-flow control command.
+ * Returns null when the message carries no control intent and may
+ * proceed to field extraction.
+ */
+export function classifyAppointmentControl(message: string): AppointmentControl {
+  const text = message.trim()
+  if (!text || text.length > 140) return null
+  if (isDenialMessage(text) || isFlowCancel(text)) return "deny"
+  if (isConfirmationMessage(text)) return "confirm"
+  if (isNewAppointmentRequest(text)) return "new"
+  return null
+}
+
+// Whole-message control vocabulary: conversational commands that carry
+// NO field data on their own. Used as a fail-closed guard inside the
+// field extractors so a control word can never become slot data even
+// if it reaches extraction.
+const CONTROL_EXACT_WORDS: ReadonlySet<string> = new Set([
+  "yes", "yeah", "yep", "yup", "ya",
+  "sure", "ok", "okay", "confirm", "confirmed", "confirming",
+  "please confirm", "book", "book it", "book this", "book that",
+  "go ahead", "do it", "continue", "proceed", "submit", "finalize",
+  "done", "all done", "correct", "right", "looks good",
+  "thats it", "that's it", "thats correct", "that's correct",
+  "thats right", "that's right", "thats good", "that's good",
+  "thats fine", "that's fine",
+  "no", "nope", "nah", "cancel", "change it",
+  "another appointment", "new appointment",
+  "haan", "ha", "han",
+])
+
+/**
+ * True when the ENTIRE message is a conversational command with no
+ * appointment field data. Field extractors must return "no evidence"
+ * for such messages.
+ */
+export function isControlMessage(message: string): boolean {
+  const text = message.trim()
+  if (!text || text.length > 140) return false
+  const normalized = text
+    .toLowerCase()
+    .replace(/[.!?]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (CONTROL_EXACT_WORDS.has(normalized)) return true
+  // Pattern-level control (covers punctuated/longer variants) — but
+  // only when the message carries no hard field evidence (phone,
+  // date, time), so "confirm for 4pm" still yields its time.
+  if (!extractPhone(text) && !extractDate(text, new Date()) && !extractTime(text)) {
+    if (classifyAppointmentControl(text) !== null) return true
+  }
+  return false
 }
 
 // === Delegation intents ("choose for me" / "what's available") ============

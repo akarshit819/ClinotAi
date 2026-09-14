@@ -303,6 +303,25 @@ function maxTypoDistance(tokenLength: number): number {
   return tokenLength <= 4 ? 1 : 2
 }
 
+// A single adjacent-character transposition ("pian" ↔ "pain") is the
+// most common human typo shape after single edits. Levenshtein scores
+// it as distance 2, so it needs explicit recognition — but ONLY inside
+// the body+complaint pairing rule below, where the pairing itself is
+// the high-confidence clinical signal.
+function isSingleTransposition(a: string, b: string): boolean {
+  if (a.length !== b.length || a.length < 3) return false
+  for (let i = 0; i < a.length - 1; i++) {
+    if (a[i] !== b[i]) {
+      return (
+        a[i] === b[i + 1] &&
+        a[i + 1] === b[i] &&
+        a.slice(i + 2) === b.slice(i + 2)
+      )
+    }
+  }
+  return false
+}
+
 // Known non-medical words that should never match complaint vocabulary
 const NON_COMPLAINT_WORDS = new Set([
   "training",
@@ -390,7 +409,7 @@ export function fuzzyHealthSignal(rawText: string): TypoHealthSignal {
           const bw = BODY_WORDS[b]
           if (Math.abs(bw.length - token.length) <= 1) {
             const d = levenshteinDistance(token, bw, 1)
-            if (d <= 1) {
+            if (d <= 1 || isSingleTransposition(token, bw)) {
               matchedBody = { token, word: bw }
               break
             }
@@ -401,12 +420,12 @@ export function fuzzyHealthSignal(rawText: string): TypoHealthSignal {
     if (!matchedComplaint) {
       if (COMPLAINT_VOCAB.has(token)) {
         matchedComplaint = { token, word: token }
-      } else if (token.length >= 3) {
+      } else if (token.length >= 3 && !NON_COMPLAINT_WORDS.has(token)) {
         for (let c = 0; c < COMPLAINT_WORDS.length; c++) {
           const cw = COMPLAINT_WORDS[c]
           if (Math.abs(cw.length - token.length) <= 1) {
             const d = levenshteinDistance(token, cw, 1)
-            if (d <= 1) {
+            if (d <= 1 || isSingleTransposition(token, cw)) {
               matchedComplaint = { token, word: cw }
               break
             }
