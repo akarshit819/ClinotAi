@@ -325,7 +325,11 @@ export async function generateAIResponseWithTools(
 
     // ONE provider: OpenRouter free-model failover manager.
     const config = getOpenRouterConfig()
-    const includeTools = options?.includeTools !== false
+    // Secure by default: LLM tool use (which can write appointments)
+    // must be explicitly opted into per call site. The WhatsApp
+    // receptionist always passes includeTools: false and books only
+    // through the deterministic confirmation gate.
+    const includeTools = options?.includeTools === true
     const toolDefinitions = includeTools ? buildToolDefinitions() : []
 
     trace({

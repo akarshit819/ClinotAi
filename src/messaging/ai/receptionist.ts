@@ -31,7 +31,6 @@
 
 import { prisma } from "@/lib/db"
 import { generateAIResponseWithTools } from "@/lib/ai"
-import { detectIntent } from "./intent"
 import {
   processSlotAnswer,
   readDraftFromMetadata,
