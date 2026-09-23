@@ -88,11 +88,11 @@ async function LeadList() {
       <EmptyState
         icon={Users}
         title="Ready to capture your first lead?"
-        description="Install the Clinot widget on your website to start answering patient questions and collecting leads automatically."
+        description="Connect your WhatsApp Business account to start answering patient inquiries and capturing leads automatically."
         action={
-          <Link href="/dashboard/website-integration">
+          <Link href="/dashboard/integrations">
             <Button size="sm">
-              Install Widget
+              Connect WhatsApp
               <ArrowRight className="h-3.5 w-3.5" />
             </Button>
           </Link>

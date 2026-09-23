@@ -359,10 +359,10 @@ describe("TEST 7/8 (pipeline): READY corrections are surgical", () => {
     expect(draft().patientName).toBe("Akarshit Rajput")
     expect(r.outbound).toMatch(/4:00 PM/)
 
-    r = await turn("Change date to 21 September", 4)
+    r = await turn("Change date to 30 September 2026", 4)
     expect(r.aiCalls).toBe(0)
     expect(bookingState.calls.length).toBe(0)
-    expect(draft().preferredDate).toBe("2026-09-21")
+    expect(draft().preferredDate).toBe("2026-09-30")
     expect(draft().preferredTime).toBe("16:00")
 
     r = await turn("Yes", 5)
@@ -370,7 +370,7 @@ describe("TEST 7/8 (pipeline): READY corrections are surgical", () => {
     expect(r.outbound).toMatch(/confirmed/i)
     expect(bookingState.calls.length).toBe(1)
     const booked = bookingState.calls[0].draft as Record<string, unknown>
-    expect(booked.preferredDate).toBe("2026-09-21")
+    expect(booked.preferredDate).toBe("2026-09-30")
     expect(booked.preferredTime).toBe("16:00")
   })
 })

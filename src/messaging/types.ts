@@ -137,7 +137,7 @@ export interface PlatformConfig {
 }
 
 export const PLATFORM_CONFIGS: Record<Platform, PlatformConfig> = {
-  website:           { platform: "website",           name: "Website Chat",       icon: "Globe",       color: "#2463EB", description: "Embedded chat widget on your clinic website", connectUrl: "/dashboard/website-integration" },
+  website:           { platform: "website",           name: "Website Chat",       icon: "Globe",       color: "#2463EB", description: "Embedded chat widget on your clinic website" },
   whatsapp:          { platform: "whatsapp",          name: "WhatsApp",           icon: "MessageCircle", color: "#25D366", description: "WhatsApp Business API integration", docsUrl: "https://developers.facebook.com/docs/whatsapp" },
   instagram:         { platform: "instagram",         name: "Instagram",          icon: "Camera",      color: "#E4405F", description: "Instagram Direct Messages", docsUrl: "https://developers.facebook.com/docs/instagram-api" },
   facebook:          { platform: "facebook",           name: "Facebook Messenger", icon: "MessageSquare", color: "#1877F2", description: "Facebook Page Messenger", docsUrl: "https://developers.facebook.com/docs/messenger-platform" },

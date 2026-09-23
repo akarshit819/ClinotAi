@@ -14,7 +14,6 @@ const routes = [
   { path: "/features/dashboard", priority: 0.8, changeFrequency: "monthly" as const },
   { path: "/how-it-works", priority: 0.8, changeFrequency: "monthly" as const },
   { path: "/pricing", priority: 0.8, changeFrequency: "monthly" as const },
-  { path: "/demo", priority: 0.7, changeFrequency: "monthly" as const },
   { path: "/security", priority: 0.6, changeFrequency: "monthly" as const },
   { path: "/about", priority: 0.6, changeFrequency: "monthly" as const },
   { path: "/faq", priority: 0.6, changeFrequency: "monthly" as const },

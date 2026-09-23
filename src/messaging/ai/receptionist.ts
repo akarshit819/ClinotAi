@@ -750,6 +750,49 @@ export async function runAiReceptionist(
           responseSource: "APPOINTMENT",
         }
       }
+      if (result.reason === "max_active_appointments") {
+        logger.warn("[APPOINTMENT] Booking refused — max active appointments limit reached", {
+          conversationId: context.conversation.id,
+          clinicId: context.clinicId,
+        })
+        const clearedDraft = clearDraft("cancelled")
+        await prisma.conversation.update({
+          where: { id: context.conversation.id },
+          data: {
+            metadata: updateContextState(
+              writeDraftToMetadata(context.conversation.metadata, clearedDraft),
+              { currentTopic: "appointment", lastUserIntent: "max_appointments_reached" },
+            ),
+            intent: "appointment",
+            status: "active",
+            summary: message.content.slice(0, 200),
+          },
+        })
+        return {
+          response:
+            "You currently have 3 active appointments scheduled with our clinic. " +
+            "To book a new appointment, please cancel or reschedule an existing one first, or feel free to contact our front desk.",
+          intent: "appointment",
+          confidence: 0.95,
+          requiresClinic: false,
+          responseSource: "APPOINTMENT",
+        }
+      }
+      if (result.reason === "rate_limited") {
+        logger.warn("[APPOINTMENT] Booking rate-limited", {
+          conversationId: context.conversation.id,
+          clinicId: context.clinicId,
+        })
+        return {
+          response:
+            result.message ||
+            "You're booking appointments too quickly. Please wait a few minutes before trying again.",
+          intent: "appointment",
+          confidence: 0.9,
+          requiresClinic: false,
+          responseSource: "APPOINTMENT",
+        }
+      }
       // no_provider / missing_fields / error: keep the draft, be honest,
       // never pretend success.
       logger.error("[APPOINTMENT] Booking failed at confirmation", {
@@ -1282,45 +1325,22 @@ export async function runAiReceptionist(
   // LEVEL 5d: NATURAL GREETING STRATEGY
   const isGreeting = /^(hi|hello|hey|hola|namaste|good\s+(morning|afternoon|evening)|greetings|howdy)\b/i.test(message.content.trim())
   if (decision.route === "GENERAL" && isGreeting) {
-    const isNewConversation = conversationHistory.length === 0
-    if (isNewConversation) {
-      const clinicName = context.clinic.name || "our clinic"
-      const welcome = `Hi! 👋 Welcome to ${clinicName}. I'm Clinot, your virtual assistant. I can help you book an appointment, check clinic information, and guide you to the right next step. How can I help you today?`
-      await prisma.conversation.update({
-        where: { id: context.conversation.id },
-        data: {
-          metadata: updateContextState(context.conversation.metadata, {
-            currentTopic: "general",
-            lastUserIntent: "greeting",
-          }),
-        },
-      })
-      return {
-        response: welcome,
-        intent: "general_question",
-        confidence: 0.95,
-        requiresClinic: false,
-        responseSource: "SYSTEM",
-      }
-    } else {
-      const patientName = message.from.name ? ` ${message.from.name}` : ""
-      const returningGreeting = `Hi${patientName}! 👋 How can I help you today?`
-      await prisma.conversation.update({
-        where: { id: context.conversation.id },
-        data: {
-          metadata: updateContextState(context.conversation.metadata, {
-            currentTopic: "general",
-            lastUserIntent: "greeting",
-          }),
-        },
-      })
-      return {
-        response: returningGreeting,
-        intent: "general_question",
-        confidence: 0.95,
-        requiresClinic: false,
-        responseSource: "SYSTEM",
-      }
+    const greetingText = formatReceptionistGreeting(message.from.name)
+    await prisma.conversation.update({
+      where: { id: context.conversation.id },
+      data: {
+        metadata: updateContextState(context.conversation.metadata, {
+          currentTopic: "general",
+          lastUserIntent: "greeting",
+        }),
+      },
+    })
+    return {
+      response: greetingText,
+      intent: "general_question",
+      confidence: 0.95,
+      requiresClinic: false,
+      responseSource: "SYSTEM",
     }
   }
 
@@ -1443,6 +1463,14 @@ async function buildAvailableTimesMessage(clinicId: string, dateIso?: string): P
     })
     return "I couldn't check availability just now. Please try again in a moment."
   }
+}
+
+export function formatReceptionistGreeting(rawName?: string | null): string {
+  const clean = rawName?.trim()
+  if (clean && clean.toLowerCase() !== "unknown") {
+    return `Hello, ${clean}! How can I help you today?`
+  }
+  return "Hello! Welcome to Clinot. How can I help you today?"
 }
 
 function buildEmergencyResponse(clinic: PipelineContext["clinic"]): string {

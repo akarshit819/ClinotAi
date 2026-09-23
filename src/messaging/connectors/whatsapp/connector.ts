@@ -27,7 +27,10 @@ export class WhatsAppConnector extends BaseConnector {
     if (messages.length === 0) throw new Error("No messages in payload")
 
     const msg = messages[0]
-    const contactName = body.entry?.[0]?.changes?.[0]?.value?.contacts?.[0]?.profile?.name || "Unknown"
+    const rawContactName = body.entry?.[0]?.changes?.[0]?.value?.contacts?.[0]?.profile?.name
+    const contactName = rawContactName && rawContactName.trim().length > 0 && rawContactName.trim().toLowerCase() !== "unknown"
+      ? rawContactName.trim()
+      : undefined
 
     return {
       platform: "whatsapp",

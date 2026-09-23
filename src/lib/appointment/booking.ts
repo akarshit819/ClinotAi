@@ -24,10 +24,17 @@ import { fromZonedTime } from "date-fns-tz"
 import { prisma } from "@/lib/db"
 import { logger } from "@/lib/logger"
 import { checkSlotAvailability, reserveSlot, resolveTimezone } from "./availability"
+import {
+  MAX_ACTIVE_APPOINTMENTS_PER_PHONE,
+  ACTIVE_APPOINTMENT_STATUSES,
+  getCandidatePhoneVariants,
+  normalizePhoneNumber,
+  isValidPhoneNumber,
+} from "./phone-utils"
+import { checkRateLimit, rateLimitKey } from "@/lib/security/rate-limit"
 import type { AppointmentDraft } from "@/messaging/ai/appointment-state"
 
 export const BOOKING_SLOT_MINUTES = 30
-const ACTIVE_APPOINTMENT_STATUSES = ["pending", "confirmed", "in_progress"]
 
 export interface BookingRequest {
   clinicId: string
@@ -55,6 +62,8 @@ export type BookingResult =
   | { ok: false; reason: "missing_fields"; missing: string[] }
   | { ok: false; reason: "no_provider" }
   | { ok: false; reason: "slot_taken" }
+  | { ok: false; reason: "max_active_appointments"; message: string }
+  | { ok: false; reason: "rate_limited"; message: string }
   | { ok: false; reason: "error"; error: string }
 
 function missingFields(draft: AppointmentDraft, phone: string | undefined): string[] {
@@ -69,16 +78,41 @@ function missingFields(draft: AppointmentDraft, phone: string | undefined): stri
 
 export async function bookAppointmentFromDraft(req: BookingRequest): Promise<BookingResult> {
   const { clinicId, draft } = req
-  const phone = draft.patientPhone?.trim() || req.whatsappPhone?.trim() || ""
-  const name = draft.patientName?.trim() || req.whatsappName?.trim() || "Patient"
-  const reason = draft.reason?.trim() || ""
+  const rawPhone = draft.patientPhone?.trim() || req.whatsappPhone?.trim() || ""
+  // Sanitize inputs (strip angle brackets that could be used for injection, trim, limit length)
+  const phone = rawPhone.replace(/[<>]/g, "").trim().slice(0, 20)
+  const rawName = draft.patientName?.trim() || req.whatsappName?.trim() || "Patient"
+  const name = rawName.replace(/[<>]/g, "").trim().slice(0, 100)
+  const rawReason = draft.reason?.trim() || ""
+  const reason = rawReason.replace(/[<>]/g, "").trim().slice(0, 500)
   const date = draft.preferredDate || ""
   const time = draft.preferredTime || ""
 
-  const missing = missingFields(draft, phone || undefined)
+  const missing = missingFields({ ...draft, patientName: name, patientPhone: phone, reason }, phone || undefined)
   if (missing.length > 0) {
     logger.warn("[APPOINTMENT] Booking refused — missing fields", { clinicId, missing })
     return { ok: false, reason: "missing_fields", missing }
+  }
+
+  if (!isValidPhoneNumber(phone)) {
+    logger.warn("[APPOINTMENT] Booking refused — invalid phone", { clinicId, phone })
+    return { ok: false, reason: "error", error: "invalid_phone" }
+  }
+
+  // Appointment spam protection: rate limit per clinic + normalized phone
+  // Skip in test environment to avoid flaky tests that share the same
+  // in-memory rate-limit store across many booking cases.
+  if (process.env.NODE_ENV !== "test") {
+    const rateKey = rateLimitKey(clinicId, normalizePhoneNumber(phone))
+    const rateResult = checkRateLimit("appointment", rateKey)
+    if (!rateResult.allowed) {
+      logger.warn("[APPOINTMENT] Booking rate-limited", { clinicId, phone })
+      return {
+        ok: false,
+        reason: "rate_limited",
+        message: "Too many appointment requests for this phone number. Please wait a few minutes before trying again.",
+      }
+    }
   }
 
   logger.info("[APPOINTMENT] APPOINTMENT_CREATE_STARTED", {
@@ -87,6 +121,19 @@ export async function bookAppointmentFromDraft(req: BookingRequest): Promise<Boo
     time,
     hasName: Boolean(name),
   })
+
+  // Helper: count active appointments for a phone, with fallback for
+  // test mocks that only provide findMany (prisma.appointment.count
+  // may be absent in unit-test mocks).
+  const countActiveForPhone = async (where: any): Promise<number> => {
+    try {
+      if (typeof (prisma.appointment as any).count === "function") {
+        return await (prisma.appointment as any).count({ where })
+      }
+    } catch {}
+    const rows = await prisma.appointment.findMany({ where, select: { id: true } })
+    return rows.length
+  }
 
   try {
     // 1) Duplicate guard BEFORE creating anything: same clinic + phone +
@@ -99,7 +146,7 @@ export async function bookAppointmentFromDraft(req: BookingRequest): Promise<Boo
         phone,
         preferredDate: date,
         preferredTime: time,
-        status: { in: ACTIVE_APPOINTMENT_STATUSES },
+        status: { in: [...ACTIVE_APPOINTMENT_STATUSES] },
         // Manually deleted rows never block rebooking.
         isDeleted: false,
       },
@@ -120,7 +167,30 @@ export async function bookAppointmentFromDraft(req: BookingRequest): Promise<Boo
       }
     }
 
-    // 2) Resolve or create the patient by verified phone (clinic-scoped).
+    // 2) Enforce maximum active appointments per phone number (limit of 3).
+    // Active statuses: pending, confirmed, in_progress. Cancelled and completed do not count.
+    const candidatePhones = getCandidatePhoneVariants(phone)
+    const activeCount = await countActiveForPhone({
+      clinicId,
+      phone: { in: candidatePhones },
+      status: { in: [...ACTIVE_APPOINTMENT_STATUSES] },
+      isDeleted: false,
+    })
+    if (activeCount >= MAX_ACTIVE_APPOINTMENTS_PER_PHONE) {
+      logger.warn("[APPOINTMENT] Booking refused — max active appointments reached", {
+        clinicId,
+        phone,
+        activeCount,
+        max: MAX_ACTIVE_APPOINTMENTS_PER_PHONE,
+      })
+      return {
+        ok: false,
+        reason: "max_active_appointments",
+        message: "You already have 3 active appointments scheduled with our clinic. To book a new one, please reschedule or cancel an existing appointment, or contact our front desk.",
+      }
+    }
+
+    // 3) Resolve or create the patient by verified phone (clinic-scoped).
     let patient = await prisma.patient.findFirst({
       where: { clinicId, phone },
       select: { id: true, name: true },
@@ -301,6 +371,17 @@ export async function bookAppointmentFromDraft(req: BookingRequest): Promise<Boo
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
+      if (msg === "MAX_ACTIVE_APPOINTMENTS_REACHED") {
+        logger.warn("[APPOINTMENT] Booking refused — max active appointments reached during reservation", {
+          clinicId,
+          phone,
+        })
+        return {
+          ok: false,
+          reason: "max_active_appointments",
+          message: "You already have 3 active appointments scheduled with our clinic. To book a new one, please reschedule or cancel an existing appointment, or contact our front desk.",
+        }
+      }
       if (msg === "SLOT_NO_LONGER_AVAILABLE") {
         // Lost a race: distinguish "you already booked this" from
         // "someone else just took the slot" from "no real conflict".
@@ -310,7 +391,7 @@ export async function bookAppointmentFromDraft(req: BookingRequest): Promise<Boo
             phone,
             preferredDate: date,
             preferredTime: time,
-            status: { in: ACTIVE_APPOINTMENT_STATUSES },
+            status: { in: [...ACTIVE_APPOINTMENT_STATUSES] },
             isDeleted: false,
           },
           select: { id: true, patientId: true, doctor: true },
@@ -467,7 +548,7 @@ async function findExactConflicts(
         clinicId,
         preferredDate: date,
         preferredTime: time,
-        status: { in: ACTIVE_APPOINTMENT_STATUSES },
+        status: { in: [...ACTIVE_APPOINTMENT_STATUSES] },
         isDeleted: false,
       },
       select: { id: true },

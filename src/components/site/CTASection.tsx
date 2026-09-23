@@ -34,9 +34,9 @@ export function CTASection({
                   <ArrowRight className="h-4 w-4" />
                 </Button>
               </Link>
-              <Link href="/demo">
+              <Link href="/product">
                 <Button size="lg" variant="ghost" className="w-full sm:w-auto text-white hover:bg-white/10">
-                  See It Live
+                  Explore Product
                 </Button>
               </Link>
             </div>

@@ -22,9 +22,9 @@ export function VisionSection() {
               <ArrowRight className="h-4 w-4" />
             </Button>
           </Link>
-          <Link href="/demo">
+          <Link href="/product">
             <Button size="lg" variant="secondary">
-              See It Live
+              Explore Product
             </Button>
           </Link>
         </div>

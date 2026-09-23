@@ -125,8 +125,9 @@ const PLATFORM_DETAILS: Record<string, {
   },
 }
 
-const connectablePlatforms = ["whatsapp", "instagram", "facebook", "telegram", "email"]
-const comingSoonPlatforms = ["google_business", "apple_messages", "sms", "voice_ai", "teams", "slack"]
+const connectablePlatforms = ["whatsapp", "instagram", "facebook", "telegram", "sms"]
+const UNAVAILABLE_COMING_SOON = new Set(["instagram", "facebook", "telegram", "sms"])
+const comingSoonPlatforms = ["google_business", "apple_messages", "voice_ai", "teams", "slack"]
 
 function SkeletonCard() {
   return (
@@ -195,6 +196,10 @@ export default function IntegrationsPage() {
   }, [fetchIntegrations])
 
   const handleConnect = async (platform: string, authType: string) => {
+    if (UNAVAILABLE_COMING_SOON.has(platform)) {
+      return
+    }
+
     if (authType === "oauth") {
       setConnecting(platform)
       try {
@@ -376,28 +381,33 @@ export default function IntegrationsPage() {
               const integration = getIntegration(platform)
               const details = PLATFORM_DETAILS[platform]
               if (!details) return null
-              const isConnected = integration?.connected === true
+              const isComingSoon = UNAVAILABLE_COMING_SOON.has(platform)
+              const isConnected = !isComingSoon && integration?.connected === true
               const status = integration?.status || "disconnected"
               const Icon = details.icon
 
               return (
-                <Card key={platform} hover>
+                <Card key={platform} hover className={isComingSoon ? "opacity-75" : ""}>
                   <CardContent className="p-5">
                     <div className="flex items-start gap-4">
                       <div className={cn(
                         "flex h-10 w-10 items-center justify-center rounded-xl shrink-0",
-                        isConnected ? details.bgLight : "bg-navy-25",
+                        isConnected ? details.bgLight : isComingSoon ? "bg-navy-50" : "bg-navy-25",
                       )}>
-                        <Icon className={cn("h-5 w-5", isConnected ? details.color : "text-navy-300")} />
+                        <Icon className={cn("h-5 w-5", isConnected ? details.color : isComingSoon ? "text-navy-400" : "text-navy-300")} />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2 mb-1">
                           <h3 className="text-sm font-semibold text-navy-900">{details.name}</h3>
-                          {getBadge(status)}
+                          {isComingSoon ? (
+                            <Badge variant="neutral" size="sm">Coming Soon</Badge>
+                          ) : (
+                            getBadge(status)
+                          )}
                         </div>
                         <p className="text-xs text-navy-400 leading-relaxed mb-2">{details.description}</p>
 
-                        {isConnected && integration && (
+                        {!isComingSoon && isConnected && integration && (
                           <div className="mb-3 space-y-1.5">
                             {integration.providerName && (
                               <p className="text-2xs text-navy-500 flex items-center gap-1.5">
@@ -445,7 +455,16 @@ export default function IntegrationsPage() {
                         )}
 
                         <div className="flex items-center gap-2">
-                          {isConnected ? (
+                          {isComingSoon ? (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              disabled
+                              className="cursor-not-allowed opacity-60 text-navy-400 bg-navy-50 border-navy-100"
+                            >
+                              Coming Soon
+                            </Button>
+                          ) : isConnected ? (
                             <>
                               <Button
                                 variant="secondary"

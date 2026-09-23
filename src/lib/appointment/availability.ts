@@ -2,6 +2,11 @@ import { prisma } from "@/lib/db"
 import { Prisma } from "@prisma/client"
 import { addMinutes, startOfDay, endOfDay, format, parse, isBefore, isAfter, addDays, setHours, setMinutes, differenceInMinutes } from "date-fns"
 import { toZonedTime, fromZonedTime, formatInTimeZone } from "date-fns-tz"
+import {
+  MAX_ACTIVE_APPOINTMENTS_PER_PHONE,
+  ACTIVE_APPOINTMENT_STATUSES,
+  getCandidatePhoneVariants,
+} from "./phone-utils"
 
 export interface ClinicHours {
   dayOfWeek: number // 0 = Sunday, 6 = Saturday
@@ -442,6 +447,48 @@ export async function reserveSlot(
 
           if (isBooked) {
             throw new Error("SLOT_NO_LONGER_AVAILABLE")
+          }
+
+          // Atomic check: enforce maximum active appointments per phone number
+          const candidatePhones = getCandidatePhoneVariants(phone)
+          let activeCount: number
+          try {
+            if (typeof (tx.appointment as any).count === "function") {
+              activeCount = await (tx.appointment as any).count({
+                where: {
+                  clinicId,
+                  phone: { in: candidatePhones },
+                  status: { in: [...ACTIVE_APPOINTMENT_STATUSES] },
+                  isDeleted: false,
+                },
+              })
+            } else {
+              const rows = await tx.appointment.findMany({
+                where: {
+                  clinicId,
+                  phone: { in: candidatePhones },
+                  status: { in: [...ACTIVE_APPOINTMENT_STATUSES] },
+                  isDeleted: false,
+                },
+                select: { id: true },
+              })
+              activeCount = rows.length
+            }
+          } catch {
+            const rows = await tx.appointment.findMany({
+              where: {
+                clinicId,
+                phone: { in: candidatePhones },
+                status: { in: [...ACTIVE_APPOINTMENT_STATUSES] },
+                isDeleted: false,
+              },
+              select: { id: true },
+            })
+            activeCount = rows.length
+          }
+
+          if (activeCount >= MAX_ACTIVE_APPOINTMENTS_PER_PHONE) {
+            throw new Error("MAX_ACTIVE_APPOINTMENTS_REACHED")
           }
 
           // Store the clinic-local wall clock so the read path

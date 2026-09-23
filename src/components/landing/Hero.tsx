@@ -1,11 +1,11 @@
 import Link from "next/link"
 import { Button } from "@/components/ui/Button"
-import { ArrowRight, Play, MessageCircle, CalendarCheck, ShieldCheck, LayoutDashboard } from "lucide-react"
+import { ArrowRight, MessageCircle, CalendarCheck, ShieldCheck, LayoutDashboard } from "lucide-react"
 import { HeroVisual } from "@/components/site/HeroVisual"
 import { ClinotLogo } from "@/components/brand/ClinotLogo"
 
 const trustItems = [
-  { icon: MessageCircle, label: "WhatsApp & website chat" },
+  { icon: MessageCircle, label: "WhatsApp Business AI" },
   { icon: CalendarCheck, label: "Appointment capture" },
   { icon: ShieldCheck, label: "Clinic-only AI boundaries" },
   { icon: LayoutDashboard, label: "Team dashboard" },
@@ -63,14 +63,13 @@ export function Hero() {
                   <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-1" />
                 </Button>
               </Link>
-              <Link href="/demo" className="group w-full sm:w-auto">
+              <Link href="/product" className="group w-full sm:w-auto">
                 <Button
                   size="lg"
                   variant="secondary"
                   className="w-full sm:w-auto bg-white/60 backdrop-blur-md border-white/60 hover:bg-white/85 hover:-translate-y-0.5 transition-all duration-200"
                 >
-                  <Play className="h-4 w-4 transition-transform duration-200 group-hover:scale-110" />
-                  See It Live
+                  Explore Product
                 </Button>
               </Link>
             </div>

@@ -24,6 +24,7 @@ export const RATE_LIMITS = {
   chat: { window: FIFTEEN_MIN, max: 200 },
   api: { window: FIFTEEN_MIN, max: process.env.NODE_ENV === "development" ? 500 : 100 },
   emergency: { window: FIVE_MIN, max: 5 },
+  appointment: { window: FIFTEEN_MIN, max: process.env.NODE_ENV === "development" ? 50 : 10 },
   csrf: { window: ONE_HOUR, max: 1000 },
   test: { window: FIVE_MIN, max: 20 },
 } as const

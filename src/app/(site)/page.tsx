@@ -15,7 +15,6 @@ import {
   Zap,
   MessageCircle,
   Bell,
-  Sparkles,
 } from "lucide-react"
 
 export const metadata: Metadata = {
@@ -116,34 +115,6 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Live demo teaser */}
-      <section aria-label="Try Clinot" className="relative py-20 md:py-24 overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-b from-gray-25 via-primary-25/40 to-gray-25 pointer-events-none" aria-hidden="true" />
-        <div className="relative mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 text-center">
-          <Reveal>
-            <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-500 text-white shadow-glow mb-5">
-              <Sparkles className="h-6 w-6" />
-            </span>
-            <h2 className="section-title mb-4 text-balance">Talk to Clinot right now. No account needed.</h2>
-            <p className="section-subtitle mb-8">
-              Ask about hours, services, or insurance in our live demo clinic — and watch an appointment request take shape.
-            </p>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-              <Link href="/demo">
-                <Button size="lg" className="w-full sm:w-auto">
-                  Try the live demo
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
-              </Link>
-              <Link href="/product">
-                <Button size="lg" variant="secondary" className="w-full sm:w-auto">
-                  Explore the product
-                </Button>
-              </Link>
-            </div>
-          </Reveal>
-        </div>
-      </section>
 
       <CTASection />
     </>
