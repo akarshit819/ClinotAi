@@ -1322,10 +1322,11 @@ export async function runAiReceptionist(
     }
   }
 
-  // LEVEL 5d: NATURAL GREETING STRATEGY
+  // LEVEL 5d: NATURAL GREETING STRATEGY — clinic-specific
   const isGreeting = /^(hi|hello|hey|hola|namaste|good\s+(morning|afternoon|evening)|greetings|howdy)\b/i.test(message.content.trim())
   if (decision.route === "GENERAL" && isGreeting) {
-    const greetingText = formatReceptionistGreeting(message.from.name)
+    const clinicDisplayName = context.clinic.name?.trim() || null
+    const greetingText = formatReceptionistGreeting(message.from.name, clinicDisplayName)
     await prisma.conversation.update({
       where: { id: context.conversation.id },
       data: {
@@ -1465,10 +1466,14 @@ async function buildAvailableTimesMessage(clinicId: string, dateIso?: string): P
   }
 }
 
-export function formatReceptionistGreeting(rawName?: string | null): string {
+export function formatReceptionistGreeting(rawName?: string | null, clinicName?: string | null): string {
   const clean = rawName?.trim()
   if (clean && clean.toLowerCase() !== "unknown") {
     return `Hello, ${clean}! How can I help you today?`
+  }
+  const clinicDisplay = clinicName?.trim()
+  if (clinicDisplay && clinicDisplay.length > 0 && clinicDisplay.toLowerCase() !== "unknown") {
+    return `Hello! Welcome to ${clinicDisplay}! How can I help you today?`
   }
   return "Hello! Welcome to Clinot. How can I help you today?"
 }

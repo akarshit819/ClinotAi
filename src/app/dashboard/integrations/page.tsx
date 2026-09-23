@@ -345,7 +345,7 @@ export default function IntegrationsPage() {
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-xl font-bold text-navy-900 dark:text-navy-100 tracking-tight">Integrations</h1>
-          <p className="text-sm text-navy-400 mt-1">Connect your clinic to real messaging channels.</p>
+          <p className="text-sm text-navy-400 dark:text-navy-500 mt-1">Connect your clinic to messaging platforms.</p>
         </div>
         <Button variant="secondary" size="sm" onClick={handleRefresh} disabled={loading}>
           <RefreshCw className={cn("h-4 w-4 mr-1.5", loading && "animate-spin")} />
@@ -366,7 +366,7 @@ export default function IntegrationsPage() {
       )}
 
       <div>
-        <h2 className="text-xs font-semibold text-navy-500 dark:text-navy-400 uppercase tracking-wider mb-3">Messaging Channels</h2>
+        <h2 className="text-xs font-semibold text-navy-500 dark:text-navy-400 uppercase tracking-wider mb-3">Messaging Platforms</h2>
         <div className="grid sm:grid-cols-2 gap-4">
           {loading ? (
             <>

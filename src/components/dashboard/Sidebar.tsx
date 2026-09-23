@@ -16,7 +16,6 @@ import {
   Menu,
   DollarSign,
   BarChart3,
-  Inbox,
   Link2,
   X,
 } from "lucide-react"
@@ -40,9 +39,8 @@ const navSections: NavSection[] = [
     caption: "Workspace",
     items: [
       { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/dashboard/inbox", label: "Inbox", icon: Inbox },
       { href: "/dashboard/appointments", label: "Appointments", icon: CalendarCheck },
-      { href: "/dashboard/leads", label: "Leads", icon: Users },
+      { href: "/dashboard/patients", label: "Patient History", icon: Users },
     ],
   },
   {
