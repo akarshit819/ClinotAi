@@ -102,9 +102,9 @@ export default function LeadsPage() {
 
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-navy-400 dark:text-navy-500" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-navy-400 dark:text-navy-500 dark:text-navy-400" />
           <input type="text" placeholder="Search leads..." value={search} onChange={(e) => setSearch(e.target.value)} className="input-field pl-9 pr-8" />
-          {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2"><X className="h-4 w-4 text-navy-400 dark:text-navy-500" /></button>}
+          {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2"><X className="h-4 w-4 text-navy-400 dark:text-navy-500 dark:text-navy-400" /></button>}
         </div>
         <button onClick={() => { setSortBy(sortBy === "date" ? "status" : "date"); setSortAsc(!sortAsc) }} className="input-field w-auto flex items-center gap-2 text-sm dark:border-navy-600">
           <ArrowUpDown className="h-4 w-4" />
@@ -127,22 +127,22 @@ export default function LeadsPage() {
               <div className="space-y-2 mb-4">
                 {lead.email && (
                   <div className="flex items-center gap-2 text-sm text-navy-600 dark:text-navy-300">
-                    <Mail className="h-3.5 w-3.5 text-navy-400 dark:text-navy-500 shrink-0" />
+                    <Mail className="h-3.5 w-3.5 text-navy-400 dark:text-navy-500 dark:text-navy-400 shrink-0" />
                     <span className="truncate">{lead.email}</span>
                   </div>
                 )}
                 {lead.phone && (
                   <div className="flex items-center gap-2 text-sm text-navy-600 dark:text-navy-300">
-                    <Phone className="h-3.5 w-3.5 text-navy-400 dark:text-navy-500 shrink-0" />
+                    <Phone className="h-3.5 w-3.5 text-navy-400 dark:text-navy-500 dark:text-navy-400 shrink-0" />
                     {lead.phone}
                   </div>
                 )}
                 {lead.interestedIn && (
-                  <div className="text-xs text-navy-400 dark:text-navy-500">Interested in: {lead.interestedIn}</div>
+                  <div className="text-xs text-navy-400 dark:text-navy-500 dark:text-navy-400">Interested in: {lead.interestedIn}</div>
                 )}
                 {lead.source && <Badge variant="neutral">{lead.source}</Badge>}
               </div>
-              <div className="text-[10px] text-navy-400 dark:text-navy-500 mb-3">{formatDateTime(lead.createdAt)}</div>
+              <div className="text-[10px] text-navy-400 dark:text-navy-500 dark:text-navy-400 mb-3">{formatDateTime(lead.createdAt)}</div>
               <div className="flex flex-wrap gap-1.5">
                 {lead.status !== "contacted" && (
                   <button onClick={() => updateStatus(lead.id, "contacted")} className="text-[10px] px-2 py-1 rounded-lg bg-primary-50 text-primary-600 hover:bg-primary-100 font-medium">

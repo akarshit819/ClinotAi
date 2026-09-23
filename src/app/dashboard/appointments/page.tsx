@@ -190,7 +190,7 @@ export default function AppointmentsPage() {
           <div
             role="tablist"
             aria-label="Appointment view"
-            className="flex items-center gap-0.5 rounded-xl border border-navy-100 bg-navy-50 p-1 dark:border-navy-700 dark:bg-navy-800"
+            className="flex items-center gap-0.5 rounded-xl border border-navy-100 dark:border-navy-700 bg-navy-50 p-1 dark:border-navy-700 dark:bg-navy-800"
           >
             {(["list", "calendar"] as const).map((v) => (
               <button
@@ -200,8 +200,8 @@ export default function AppointmentsPage() {
                 onClick={() => setView(v)}
                 className={`rounded-lg px-3 py-1.5 text-sm font-medium capitalize transition-all duration-150 ${
                   view === v
-                    ? "bg-white text-navy-900 shadow-sm dark:bg-navy-700 dark:text-navy-100"
-                    : "text-navy-500 hover:text-navy-700 dark:text-navy-400 dark:hover:text-navy-200"
+                    ? "bg-white dark:bg-navy-800 text-navy-900 dark:text-navy-100 shadow-sm dark:bg-navy-700 dark:text-navy-100"
+                    : "text-navy-500 dark:text-navy-400 hover:text-navy-700 dark:text-navy-400 dark:hover:text-navy-200"
                 }`}
               >
                 {v}
@@ -227,10 +227,10 @@ export default function AppointmentsPage() {
                 const isToday = d.toDateString() === new Date().toDateString()
                 return (
                   <div key={i} className={`p-2 rounded-xl border ${isToday ? "border-primary-200 dark:border-primary-700 bg-primary-50/30 dark:bg-primary-900/20" : "border-navy-100 dark:border-navy-700"}`}>
-                    <div className="text-xs font-medium text-navy-400 dark:text-navy-500 mb-1">{dayLabels[d.getDay()]}</div>
+                    <div className="text-xs font-medium text-navy-400 dark:text-navy-500 dark:text-navy-400 mb-1">{dayLabels[d.getDay()]}</div>
                     <div className={`text-lg font-bold mb-2 ${isToday ? "text-primary-600 dark:text-primary-400" : "text-navy-700 dark:text-navy-200"}`}>{d.getDate()}</div>
                     {dayAppts.length === 0 ? (
-                      <div className="text-[10px] text-navy-300 dark:text-navy-600">No appts</div>
+                      <div className="text-[10px] text-navy-300 dark:text-navy-600 dark:text-navy-300">No appts</div>
                     ) : (
                       <div className="space-y-1">
                         {dayAppts.slice(0, 3).map((a) => (
@@ -241,7 +241,7 @@ export default function AppointmentsPage() {
                             <div className="font-medium truncate">{a.time || ""} {a.patientName || ""}</div>
                           </div>
                         ))}
-                        {dayAppts.length > 3 && <div className="text-[10px] text-navy-400 dark:text-navy-500">+{dayAppts.length - 3} more</div>}
+                        {dayAppts.length > 3 && <div className="text-[10px] text-navy-400 dark:text-navy-500 dark:text-navy-400">+{dayAppts.length - 3} more</div>}
                       </div>
                     )}
                   </div>
@@ -301,7 +301,7 @@ export default function AppointmentsPage() {
                             <Badge variant="danger" size="sm">Emergency</Badge>
                           )}
                         </div>
-                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-navy-400 dark:text-navy-500">
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-navy-400 dark:text-navy-500 dark:text-navy-400">
                           {a.date && (
                             <span className="inline-flex items-center gap-1">
                               <Clock className="h-3 w-3" />
@@ -430,7 +430,7 @@ function DetailRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-4 px-4 py-2.5">
-      <dt className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-navy-400 dark:text-navy-500">
+      <dt className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-navy-400 dark:text-navy-500 dark:text-navy-400">
         {icon}
         {label}
       </dt>
@@ -439,7 +439,7 @@ function DetailRow({
           strong
             ? "font-semibold text-navy-900 dark:text-navy-100"
             : muted
-              ? "text-navy-400 dark:text-navy-500"
+              ? "text-navy-400 dark:text-navy-500 dark:text-navy-400"
               : "text-navy-700 dark:text-navy-200"
         }`}
       >

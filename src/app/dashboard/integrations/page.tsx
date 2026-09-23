@@ -131,7 +131,7 @@ const comingSoonPlatforms = ["google_business", "apple_messages", "voice_ai", "t
 
 function SkeletonCard() {
   return (
-    <div className="rounded-2xl border border-navy-100 bg-white p-5 animate-pulse">
+    <div className="rounded-2xl border border-navy-100 dark:border-navy-700 bg-white dark:bg-navy-800 p-5 animate-pulse">
       <div className="flex items-start gap-4">
         <div className="w-10 h-10 rounded-xl bg-navy-50" />
         <div className="flex-1 space-y-2">
@@ -344,7 +344,7 @@ export default function IntegrationsPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-xl font-bold text-navy-900 tracking-tight">Integrations</h1>
+          <h1 className="text-xl font-bold text-navy-900 dark:text-navy-100 tracking-tight">Integrations</h1>
           <p className="text-sm text-navy-400 mt-1">Connect your clinic to real messaging channels.</p>
         </div>
         <Button variant="secondary" size="sm" onClick={handleRefresh} disabled={loading}>
@@ -366,7 +366,7 @@ export default function IntegrationsPage() {
       )}
 
       <div>
-        <h2 className="text-xs font-semibold text-navy-500 uppercase tracking-wider mb-3">Messaging Channels</h2>
+        <h2 className="text-xs font-semibold text-navy-500 dark:text-navy-400 uppercase tracking-wider mb-3">Messaging Channels</h2>
         <div className="grid sm:grid-cols-2 gap-4">
           {loading ? (
             <>
@@ -398,7 +398,7 @@ export default function IntegrationsPage() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2 mb-1">
-                          <h3 className="text-sm font-semibold text-navy-900">{details.name}</h3>
+                          <h3 className="text-sm font-semibold text-navy-900 dark:text-navy-100">{details.name}</h3>
                           {isComingSoon ? (
                             <Badge variant="neutral" size="sm">Coming Soon</Badge>
                           ) : (
@@ -410,7 +410,7 @@ export default function IntegrationsPage() {
                         {!isComingSoon && isConnected && integration && (
                           <div className="mb-3 space-y-1.5">
                             {integration.providerName && (
-                              <p className="text-2xs text-navy-500 flex items-center gap-1.5">
+                              <p className="text-2xs text-navy-500 dark:text-navy-400 flex items-center gap-1.5">
                                 <CheckCircle className="h-3 w-3 text-emerald-500" />
                                 Connected as <span className="font-medium">{integration.providerName}</span>
                               </p>
@@ -460,7 +460,7 @@ export default function IntegrationsPage() {
                               variant="secondary"
                               size="sm"
                               disabled
-                              className="cursor-not-allowed opacity-60 text-navy-400 bg-navy-50 border-navy-100"
+                              className="cursor-not-allowed opacity-60 text-navy-400 bg-navy-50 border-navy-100 dark:border-navy-700"
                             >
                               Coming Soon
                             </Button>
@@ -522,39 +522,11 @@ export default function IntegrationsPage() {
         </div>
       </div>
 
-      <div>
-        <h2 className="text-xs font-semibold text-navy-500 uppercase tracking-wider mb-3">Coming Soon</h2>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {comingSoonPlatforms.map((platform) => {
-            const details = PLATFORM_DETAILS[platform]
-            if (!details) return null
-            const Icon = details.icon
-            return (
-              <div
-                key={platform}
-                className="p-4 rounded-2xl border border-navy-75 bg-navy-25/50 flex items-start gap-3 opacity-60"
-              >
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-navy-50 text-navy-300 shrink-0">
-                  <Icon className="h-4.5 w-4.5" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <h3 className="text-xs font-semibold text-navy-500">{details.name}</h3>
-                    <Badge variant="neutral" size="sm">Coming Soon</Badge>
-                  </div>
-                  <p className="text-2xs text-navy-300">{details.description}</p>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
       <Card>
         <CardContent className="p-5 flex items-start gap-3">
           <AlertCircle className="h-5 w-5 text-navy-300 shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-semibold text-navy-700 mb-0.5">How integrations work</p>
+            <p className="text-sm font-semibold text-navy-700 dark:text-navy-200 mb-0.5">How integrations work</p>
             <p className="text-xs text-navy-400 leading-relaxed">
               Each connected channel feeds patient messages into Clinot's universal inbox. The AI Receptionist
               responds automatically. Your team only gets notified for appointments, emergencies, or when confidence
@@ -566,8 +538,8 @@ export default function IntegrationsPage() {
 
       {activeModal?.type === "telegram" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setActiveModal(null)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-base font-bold text-navy-900 mb-1">Connect Telegram Bot</h3>
+          <div className="bg-white dark:bg-navy-800 rounded-2xl p-6 w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-navy-900 dark:text-navy-100 mb-1">Connect Telegram Bot</h3>
             <p className="text-xs text-navy-400 mb-4">
               Create a bot via <strong>@BotFather</strong> on Telegram and paste the token below.
             </p>
@@ -592,8 +564,8 @@ export default function IntegrationsPage() {
 
       {activeModal?.type === "email-smtp" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setActiveModal(null)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-base font-bold text-navy-900 mb-1">Connect SMTP Email</h3>
+          <div className="bg-white dark:bg-navy-800 rounded-2xl p-6 w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-navy-900 dark:text-navy-100 mb-1">Connect SMTP Email</h3>
             <p className="text-xs text-navy-400 mb-4">
               Enter your SMTP server details to send and receive emails via Clinot.
             </p>
@@ -632,8 +604,8 @@ export default function IntegrationsPage() {
 
       {activeModal?.type === "whatsapp" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setActiveModal(null)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-base font-bold text-navy-900 mb-1">Connect WhatsApp Business</h3>
+          <div className="bg-white dark:bg-navy-800 rounded-2xl p-6 w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-navy-900 dark:text-navy-100 mb-1">Connect WhatsApp Business</h3>
             <p className="text-xs text-navy-400 mb-4">
               Paste your existing Meta WhatsApp Cloud API credentials from the Meta Developer Dashboard. The values are
               validated against the Graph API and encrypted before storing.
@@ -667,8 +639,8 @@ export default function IntegrationsPage() {
 
       {activeModal?.type === "confirm-disconnect" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setActiveModal(null)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-base font-bold text-navy-900 mb-1">Disconnect {PLATFORM_DETAILS[activeModal.platform]?.name}?</h3>
+          <div className="bg-white dark:bg-navy-800 rounded-2xl p-6 w-full max-w-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-navy-900 dark:text-navy-100 mb-1">Disconnect {PLATFORM_DETAILS[activeModal.platform]?.name}?</h3>
             <p className="text-xs text-navy-400 mb-4">
               This will remove the connection and stop message processing. You can reconnect anytime.
             </p>

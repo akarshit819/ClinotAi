@@ -266,7 +266,7 @@ export default function InboxPage() {
               placeholder="Search conversations..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 text-xs bg-navy-25 border border-navy-100 rounded-lg text-navy-700 placeholder:text-navy-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-300 dark:bg-navy-800 dark:border-navy-700 dark:text-navy-100 dark:placeholder:text-navy-500"
+              className="w-full pl-9 pr-3 py-2 text-xs bg-navy-25 border border-navy-100 dark:border-navy-700 rounded-lg text-navy-700 dark:text-navy-200 placeholder:text-navy-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-300 dark:bg-navy-800 dark:border-navy-700 dark:text-navy-100 dark:placeholder:text-navy-500 dark:text-navy-400"
             />
           </div>
           <div className="flex gap-1 mt-3">
@@ -282,7 +282,7 @@ export default function InboxPage() {
                   "px-2.5 py-1 text-2xs font-medium rounded-lg transition-colors",
                   statusFilter === f.value
                     ? "bg-primary-50 text-primary-700 border border-primary-200"
-                    : "text-navy-400 hover:text-navy-600 hover:bg-navy-25 border border-transparent",
+                    : "text-navy-400 hover:text-navy-600 dark:text-navy-300 hover:bg-navy-25 border border-transparent",
                 )}
               >
                 {f.label}
@@ -297,10 +297,29 @@ export default function InboxPage() {
               {[1, 2, 3, 4, 5].map((i) => <SkeletonConversation key={i} />)}
             </div>
           ) : data?.conversations.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-              <MessageSquare className="h-10 w-10 text-navy-200 dark:text-navy-700 mb-3" />
-              <p className="text-sm font-semibold text-navy-500 dark:text-navy-300 mb-1">No conversations yet</p>
-              <p className="text-xs text-navy-400 dark:text-navy-500">Patient inquiries from all platforms will appear here.</p>
+            <div className="flex flex-col items-center justify-center py-12 px-6 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 mb-4 ring-1 ring-primary-100 dark:ring-primary-800">
+                <Inbox className="h-7 w-7" />
+              </div>
+              <h3 className="text-sm font-bold tracking-tight text-navy-900 dark:text-navy-100 mb-1.5">Your inbox is ready</h3>
+              <p className="text-xs leading-relaxed text-navy-500 dark:text-navy-400 max-w-[280px] mb-5">
+                Every patient message — WhatsApp, website, and connected channels — lands here. The AI replies instantly and notifies you for appointments and urgent cases.
+              </p>
+              <div className="w-full max-w-[280px] rounded-xl border border-navy-100 dark:border-navy-700 bg-navy-25/50 dark:bg-navy-800/50 p-3 text-left mb-4">
+                <p className="text-2xs font-semibold tracking-wider uppercase text-navy-500 dark:text-navy-400 mb-2">Get started</p>
+                <ol className="space-y-1.5 text-xs text-navy-600 dark:text-navy-300">
+                  <li className="flex items-start gap-2"><span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-white dark:bg-navy-700 border border-navy-100 dark:border-navy-600 text-2xs font-bold text-navy-500 dark:text-navy-300">1</span> Connect WhatsApp in Integrations</li>
+                  <li className="flex items-start gap-2"><span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-white dark:bg-navy-700 border border-navy-100 dark:border-navy-600 text-2xs font-bold text-navy-500 dark:text-navy-300">2</span> Share your clinic link with patients</li>
+                  <li className="flex items-start gap-2"><span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-white dark:bg-navy-700 border border-navy-100 dark:border-navy-600 text-2xs font-bold text-navy-500 dark:text-navy-300">3</span> Watch conversations appear here in real time</li>
+                </ol>
+              </div>
+              <div className="flex flex-col gap-2 w-full max-w-[280px]">
+                <a href="/dashboard/integrations" className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-navy-900 dark:bg-white px-4 py-2.5 text-xs font-semibold text-white dark:text-navy-900 hover:bg-navy-800 dark:hover:bg-navy-100 transition-colors">
+                  <MessageCircle className="h-3.5 w-3.5" />
+                  Connect WhatsApp
+                </a>
+                <p className="text-2xs text-navy-400 dark:text-navy-500">No fake data — real patient messages only.</p>
+              </div>
             </div>
           ) : (
             <div className="divide-y divide-navy-50 dark:divide-navy-800">
@@ -332,7 +351,7 @@ export default function InboxPage() {
                         <div className="flex items-center justify-between gap-2 mb-0.5">
                           <span className={cn(
                             "text-xs font-semibold truncate",
-                            conv.unreadCount > 0 ? "text-navy-900" : "text-navy-600",
+                            conv.unreadCount > 0 ? "text-navy-900 dark:text-navy-100" : "text-navy-600 dark:text-navy-300",
                           )}>
                             {conv.patientName || "Anonymous Patient"}
                           </span>
@@ -378,7 +397,7 @@ export default function InboxPage() {
             <button onClick={() => setSidebarOpen(true)} className="p-1.5 rounded-lg hover:bg-navy-25 text-navy-400">
               <Menu className="h-4 w-4" />
             </button>
-            <span className="text-xs font-semibold text-navy-700">Inbox</span>
+            <span className="text-xs font-semibold text-navy-700 dark:text-navy-200">Inbox</span>
           </div>
         )}
 
@@ -387,7 +406,7 @@ export default function InboxPage() {
             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-navy-25 mb-4">
               <MessageSquare className="h-8 w-8 text-navy-300" />
             </div>
-            <h3 className="text-sm font-semibold text-navy-700 mb-1">Select a conversation</h3>
+            <h3 className="text-sm font-semibold text-navy-700 dark:text-navy-200 mb-1">Select a conversation</h3>
             <p className="text-xs text-navy-400 max-w-xs">Choose a conversation from the left to view messages and reply.</p>
           </div>
         ) : detailLoading && messages.length === 0 ? (
@@ -410,7 +429,7 @@ export default function InboxPage() {
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-bold text-navy-900">
+                    <h2 className="text-sm font-bold text-navy-900 dark:text-navy-100">
                       {selected.patientName || patientInfo?.name || "Anonymous Patient"}
                     </h2>
                     {selected.isEmergency && (
@@ -456,8 +475,8 @@ export default function InboxPage() {
                         isUser
                           ? "bg-primary-500 text-white rounded-br-md"
                           : isAi
-                            ? "bg-navy-25 text-navy-700 rounded-bl-md dark:bg-navy-800 dark:text-navy-200"
-                            : "bg-navy-50 text-navy-600 rounded-bl-md dark:bg-navy-750 dark:text-navy-300",
+                            ? "bg-navy-25 text-navy-700 dark:text-navy-200 rounded-bl-md dark:bg-navy-800 dark:text-navy-200"
+                            : "bg-navy-50 text-navy-600 dark:text-navy-300 rounded-bl-md dark:bg-navy-750 dark:text-navy-300",
                       )}>
                       {!isUser && (
                         <div className="flex items-center gap-1.5 mb-1">
@@ -466,7 +485,7 @@ export default function InboxPage() {
                           ) : (
                             <User className="h-3 w-3 text-navy-400" />
                           )}
-                          <span className="text-2xs font-medium text-navy-400 dark:text-navy-500">
+                          <span className="text-2xs font-medium text-navy-400 dark:text-navy-500 dark:text-navy-400">
                             {isAi ? "Clinot AI" : "Clinic Staff"}
                           </span>
                         </div>
@@ -503,7 +522,7 @@ export default function InboxPage() {
                     placeholder="Type your reply... (Enter to send, Shift+Enter for new line)"
                     rows={2}
                     aria-label="Reply to patient"
-                    className="w-full px-3 py-2.5 text-xs bg-navy-25 border border-navy-100 rounded-xl text-navy-700 placeholder:text-navy-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-300 resize-none dark:bg-navy-800 dark:border-navy-700 dark:text-navy-100 dark:placeholder:text-navy-500"
+                    className="w-full px-3 py-2.5 text-xs bg-navy-25 border border-navy-100 dark:border-navy-700 rounded-xl text-navy-700 dark:text-navy-200 placeholder:text-navy-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-300 resize-none dark:bg-navy-800 dark:border-navy-700 dark:text-navy-100 dark:placeholder:text-navy-500 dark:text-navy-400"
                   />
                 </div>
                 <Button

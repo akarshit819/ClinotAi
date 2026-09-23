@@ -15,7 +15,7 @@
   }
 
   body {
-    @apply bg-gray-25 text-navy-900 font-sans;
+    @apply bg-gray-25 text-navy-900 font-sans dark:bg-navy-900 dark:text-navy-100;
   }
 
   ::selection {

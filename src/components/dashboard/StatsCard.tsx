@@ -26,13 +26,13 @@ export function StatsCard({ title, value, change, icon: Icon, color = "primary" 
           <Icon className="h-[18px] w-[18px]" />
         </div>
         {change && (
-          <span className="text-2xs font-medium text-success-600 bg-success-50 ring-1 ring-success-100/50 px-2 py-0.5 rounded-full">
+          <span className="text-2xs font-medium text-success-600 dark:text-success-300 bg-success-50 dark:bg-success-900/30 ring-1 ring-success-100/50 dark:ring-success-800 px-2 py-0.5 rounded-full">
             {change}
           </span>
         )}
       </div>
-      <div className="text-2xl font-bold text-navy-900 tracking-tight mb-0.5">{value}</div>
-      <div className="text-xs text-navy-400 font-medium">{title}</div>
+      <div className="text-2xl font-bold text-navy-900 dark:text-navy-100 tracking-tight mb-0.5">{value}</div>
+      <div className="text-xs text-navy-400 dark:text-navy-500 dark:text-navy-400 font-medium">{title}</div>
     </div>
   )
 }

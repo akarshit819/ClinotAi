@@ -83,7 +83,7 @@ const STATUS_BADGE: Record<SubscriptionStatus, { variant: "success" | "warning" 
 
 function SkeletonCard() {
   return (
-    <div className="rounded-2xl border border-navy-100 bg-white p-6 animate-pulse">
+    <div className="rounded-2xl border border-navy-100 dark:border-navy-700 bg-white dark:bg-navy-800 p-6 animate-pulse">
       <div className="flex items-start justify-between mb-4">
         <div className="space-y-2">
           <div className="h-3 w-24 bg-navy-50 rounded" />
@@ -101,7 +101,7 @@ function SkeletonCard() {
 
 function SkeletonTable() {
   return (
-    <div className="rounded-2xl border border-navy-100 bg-white p-6 animate-pulse">
+    <div className="rounded-2xl border border-navy-100 dark:border-navy-700 bg-white dark:bg-navy-800 p-6 animate-pulse">
       <div className="h-4 w-32 bg-navy-50 rounded mb-4" />
       {[1, 2, 3].map((i) => (
         <div key={i} className="flex items-center justify-between py-3 border-b border-navy-50 last:border-0">
@@ -139,21 +139,40 @@ export default function BillingPage() {
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
 
   const fetchData = useCallback(async () => {
+    setLoading(true)
+    setError(null)
     try {
       const [billingRes, usageRes] = await Promise.all([
         apiFetch("/api/billing"),
         apiFetch("/api/billing/usage"),
       ])
-      if (billingRes.ok) {
+
+      if (!billingRes.ok) {
+        const body = await billingRes.json().catch(() => null) as { error?: string } | null
+        const msg = body?.error || `Billing unavailable (${billingRes.status})`
+        // 401 is auth – don't treat as billing error, let client-auth handle redirect
+        if (billingRes.status === 401) {
+          setError("Your session has expired. Please log in again.")
+        } else {
+          setError(msg)
+        }
+        // Don't treat as fatal – keep data null so pricing cards still show,
+        // but the error banner explains the state.
+      } else {
         const billingData = await billingRes.json()
         setData(billingData)
       }
+
       if (usageRes.ok) {
         const usageData = await usageRes.json()
         setUsage(usageData)
+      } else if (usageRes.status !== 401) {
+        // Usage is non-critical – log but don't block billing view
+        console.warn("[billing] usage fetch failed:", usageRes.status)
       }
     } catch (err) {
-      setError("Failed to load billing data")
+      const msg = err instanceof Error ? err.message : "Failed to load billing data"
+      setError(msg)
     } finally {
       setLoading(false)
     }
@@ -225,17 +244,43 @@ export default function BillingPage() {
   }
 
   if (!isSubscribed) {
+    // If we failed to load billing and have no data, show a dedicated error
+    // state instead of the pricing cards (which would be misleading).
+    if (error && !data) {
+      return (
+        <div className="space-y-6 max-w-3xl">
+          <div>
+            <h1 className="text-xl font-bold text-navy-900 dark:text-navy-100 tracking-tight">Billing</h1>
+            <p className="text-sm text-navy-400 dark:text-navy-500 mt-1">Manage your subscription and billing.</p>
+          </div>
+          <Card className="border-danger-200 dark:border-danger-800">
+            <CardContent className="p-8 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-danger-50 dark:bg-danger-900/30 text-danger-500 mx-auto mb-4">
+                <AlertTriangle className="h-6 w-6" />
+              </div>
+              <h3 className="text-sm font-semibold text-navy-900 dark:text-navy-100 mb-1">Billing is temporarily unavailable</h3>
+              <p className="text-xs text-navy-400 dark:text-navy-500 max-w-sm mx-auto mb-4">{error}</p>
+              <Button size="sm" variant="secondary" onClick={fetchData}>
+                <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                Try again
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )
+    }
+
     return (
       <div className="space-y-6 max-w-3xl">
         <div>
           <h1 className="text-xl font-bold text-navy-900 dark:text-navy-100 tracking-tight">Billing</h1>
-          <p className="text-sm text-navy-400 mt-1">Choose a plan to get started with Clinot.</p>
+          <p className="text-sm text-navy-400 dark:text-navy-500 mt-1">Choose a plan to get started with Clinot.</p>
         </div>
 
         {error && (
-          <div className="p-4 rounded-xl bg-danger-50 border border-danger-100 flex items-start gap-3">
+          <div className="p-4 rounded-xl bg-danger-50 dark:bg-danger-900/30 border border-danger-100 dark:border-danger-800 flex items-start gap-3">
             <AlertTriangle className="h-4 w-4 text-danger-500 mt-0.5 shrink-0" />
-            <p className="text-xs text-danger-700">{error}</p>
+            <p className="text-xs text-danger-700 dark:text-danger-300">{error}</p>
           </div>
         )}
 
@@ -244,15 +289,15 @@ export default function BillingPage() {
             <CardContent className="p-6">
               <div className="flex items-center gap-2 mb-1">
                 <Sparkles className="h-4 w-4 text-primary-500" />
-                <h3 className="text-sm font-semibold text-navy-900">Starter</h3>
+                <h3 className="text-sm font-semibold text-navy-900 dark:text-navy-100">Starter</h3>
               </div>
               <div className="flex items-baseline gap-1 mb-4">
-                <span className="text-3xl font-bold text-navy-900">$49</span>
+                <span className="text-3xl font-bold text-navy-900 dark:text-navy-100">$49</span>
                 <span className="text-xs text-navy-400">/month</span>
               </div>
               <ul className="space-y-2 mb-6">
                 {PLAN_DETAILS.starter.features.map((f) => (
-                  <li key={f} className="flex items-start gap-2 text-xs text-navy-500">
+                  <li key={f} className="flex items-start gap-2 text-xs text-navy-500 dark:text-navy-400">
                     <CheckCircle className="h-3.5 w-3.5 text-success-500 mt-0.5 shrink-0" />
                     {f}
                   </li>
@@ -276,15 +321,15 @@ export default function BillingPage() {
             <CardContent className="p-6">
               <div className="flex items-center gap-2 mb-1">
                 <TrendingUp className="h-4 w-4 text-primary-500" />
-                <h3 className="text-sm font-semibold text-navy-900">Professional</h3>
+                <h3 className="text-sm font-semibold text-navy-900 dark:text-navy-100">Professional</h3>
               </div>
               <div className="flex items-baseline gap-1 mb-4">
-                <span className="text-3xl font-bold text-navy-900">$199</span>
+                <span className="text-3xl font-bold text-navy-900 dark:text-navy-100">$199</span>
                 <span className="text-xs text-navy-400">/month</span>
               </div>
               <ul className="space-y-2 mb-6">
                 {PLAN_DETAILS.professional.features.map((f) => (
-                  <li key={f} className="flex items-start gap-2 text-xs text-navy-500">
+                  <li key={f} className="flex items-start gap-2 text-xs text-navy-500 dark:text-navy-400">
                     <CheckCircle className="h-3.5 w-3.5 text-success-500 mt-0.5 shrink-0" />
                     {f}
                   </li>
@@ -304,7 +349,7 @@ export default function BillingPage() {
 
         <Card>
           <CardContent className="p-6 text-center">
-            <p className="text-sm font-semibold text-navy-700 mb-1">Need more?</p>
+            <p className="text-sm font-semibold text-navy-700 dark:text-navy-200 mb-1">Need more?</p>
             <p className="text-xs text-navy-400 mb-4">Enterprise plan with custom pricing, dedicated support, and SLA guarantee.</p>
             <Button variant="secondary" onClick={() => window.location.href = "/#pricing"}>
               Contact Sales
@@ -440,7 +485,7 @@ export default function BillingPage() {
 
       {data.status === "active" && usage && (
         <div>
-          <h3 className="text-sm font-semibold text-navy-900 mb-3">Current Billing Period Usage</h3>
+          <h3 className="text-sm font-semibold text-navy-900 dark:text-navy-100 mb-3">Current Billing Period Usage</h3>
           <div className="grid sm:grid-cols-3 gap-4">
             <Card>
               <CardContent className="p-5">
@@ -449,7 +494,7 @@ export default function BillingPage() {
                     <MessageSquare className="h-4 w-4" />
                   </div>
                 </div>
-                <div className="text-2xl font-bold text-navy-900">{usage.usage.conversations.toLocaleString()}</div>
+                <div className="text-2xl font-bold text-navy-900 dark:text-navy-100">{usage.usage.conversations.toLocaleString()}</div>
                 <div className="text-xs text-navy-400 mb-2">Conversations</div>
                 <div className="w-full bg-navy-50 rounded-full h-1.5">
                   <div
@@ -472,7 +517,7 @@ export default function BillingPage() {
                     <BarChart3 className="h-4 w-4" />
                   </div>
                 </div>
-                <div className="text-2xl font-bold text-navy-900">{usage.usage.totalTokens.toLocaleString()}</div>
+                <div className="text-2xl font-bold text-navy-900 dark:text-navy-100">{usage.usage.totalTokens.toLocaleString()}</div>
                 <div className="text-xs text-navy-400">Total Tokens Used</div>
               </CardContent>
             </Card>
@@ -484,7 +529,7 @@ export default function BillingPage() {
                     <Calendar className="h-4 w-4" />
                   </div>
                 </div>
-                <div className="text-2xl font-bold text-navy-900">
+                <div className="text-2xl font-bold text-navy-900 dark:text-navy-100">
                   {data.nextBillingDate ? new Date(data.nextBillingDate).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
                 </div>
                 <div className="text-xs text-navy-400">Next Reset Date</div>
@@ -515,7 +560,7 @@ export default function BillingPage() {
           <div className="grid sm:grid-cols-2 gap-4 mb-4">
             <div className="p-3 rounded-xl bg-navy-25">
               <p className="text-2xs text-navy-400 mb-0.5">Current Period</p>
-              <p className="text-xs font-semibold text-navy-700">
+              <p className="text-xs font-semibold text-navy-700 dark:text-navy-200">
                 {data.currentPeriodStart ? new Date(data.currentPeriodStart).toLocaleDateString() : "—"}
                 {" — "}
                 {data.currentPeriodEnd ? new Date(data.currentPeriodEnd).toLocaleDateString() : "—"}
@@ -523,18 +568,18 @@ export default function BillingPage() {
             </div>
             <div className="p-3 rounded-xl bg-navy-25">
               <p className="text-2xs text-navy-400 mb-0.5">Next Payment</p>
-              <p className="text-xs font-semibold text-navy-700">
+              <p className="text-xs font-semibold text-navy-700 dark:text-navy-200">
                 {data.nextBillingDate ? new Date(data.nextBillingDate).toLocaleDateString() : "—"}
                 {data.upcomingInvoice && <> · ${(data.upcomingInvoice.amount / 100).toFixed(2)}</>}
               </p>
             </div>
           </div>
 
-          <div className="border-t border-navy-100 pt-4">
-            <p className="text-2xs font-semibold text-navy-500 mb-2 uppercase tracking-wider">Included Features</p>
+          <div className="border-t border-navy-100 dark:border-navy-700 pt-4">
+            <p className="text-2xs font-semibold text-navy-500 dark:text-navy-400 mb-2 uppercase tracking-wider">Included Features</p>
             <div className="grid sm:grid-cols-2 gap-1.5">
               {planDetails.features.map((f) => (
-                <div key={f} className="flex items-center gap-2 text-xs text-navy-500">
+                <div key={f} className="flex items-center gap-2 text-xs text-navy-500 dark:text-navy-400">
                   <CheckCircle className="h-3 w-3 text-success-500 shrink-0" />
                   {f}
                 </div>
@@ -553,14 +598,14 @@ export default function BillingPage() {
                   <DollarSign className="h-4.5 w-4.5" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-navy-900">Upcoming Invoice</p>
+                  <p className="text-sm font-semibold text-navy-900 dark:text-navy-100">Upcoming Invoice</p>
                   <p className="text-2xs text-navy-400">
                     {data.upcomingInvoice.periodEnd ? new Date(data.upcomingInvoice.periodEnd).toLocaleDateString() : "Next billing date"}
                   </p>
                 </div>
               </div>
               <div className="text-right">
-                <p className="text-lg font-bold text-navy-900">
+                <p className="text-lg font-bold text-navy-900 dark:text-navy-100">
                   ${(data.upcomingInvoice.amount / 100).toFixed(2)}
                 </p>
                 <p className="text-2xs text-navy-400 uppercase">{data.upcomingInvoice.currency}</p>
@@ -578,7 +623,7 @@ export default function BillingPage() {
           {data.invoices.length === 0 ? (
             <div className="text-center py-8">
               <FileText className="h-10 w-10 mx-auto mb-2 text-navy-300" />
-              <p className="text-sm text-navy-500">No invoices yet</p>
+              <p className="text-sm text-navy-500 dark:text-navy-400">No invoices yet</p>
               <p className="text-xs text-navy-400 mt-1">Invoices will appear after your first billing cycle.</p>
             </div>
           ) : (
@@ -598,7 +643,7 @@ export default function BillingPage() {
                        <FileText className="h-4 w-4" />}
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-navy-700">
+                      <p className="text-sm font-semibold text-navy-700 dark:text-navy-200">
                         ${(inv.amount / 100).toFixed(2)} {inv.currency.toUpperCase()}
                       </p>
                       <p className="text-2xs text-navy-400">
@@ -619,7 +664,7 @@ export default function BillingPage() {
                         href={inv.invoiceUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="p-1.5 rounded-lg hover:bg-navy-50 text-navy-400 hover:text-navy-600 transition-colors"
+                        className="p-1.5 rounded-lg hover:bg-navy-50 text-navy-400 hover:text-navy-600 dark:text-navy-300 transition-colors"
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
                       </a>
@@ -639,7 +684,7 @@ export default function BillingPage() {
               <Shield className="h-4.5 w-4.5" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-navy-900">Payment Methods & Billing Details</p>
+              <p className="text-sm font-semibold text-navy-900 dark:text-navy-100">Payment Methods & Billing Details</p>
               <p className="text-xs text-navy-400 mt-0.5">
                 {data.paymentMethodBrand ? (
                   <>Card ending in {data.paymentMethodLast4} · {data.paymentMethodBrand}</>
