@@ -5,8 +5,8 @@ vi.mock("@/lib/db", () => {
   const mock: Record<string, any> = {
     user: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     clinic: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-    role: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
-    rolePermission: { create: vi.fn(), upsert: vi.fn() },
+    role: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn(), createMany: vi.fn(), findMany: vi.fn() },
+    rolePermission: { create: vi.fn(), createMany: vi.fn(), upsert: vi.fn() },
     permission: { findMany: vi.fn() },
     session: { create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findMany: vi.fn(), findUnique: vi.fn() },
     refreshToken: { create: vi.fn(), updateMany: vi.fn(), findFirst: vi.fn() },
@@ -205,11 +205,18 @@ describe("registerClinic", () => {
   it("creates a clinic, default roles and user; then session", async () => {
     ;(prisma.user.findUnique as any).mockResolvedValue(null)
     ;(prisma.clinic.create as any).mockResolvedValue({ id: "clinic_new", name: "Smith Dental", slug: "smith-dental" })
-    ;(prisma.permission.findMany as any).mockResolvedValue([])
-    ;(prisma.role.create as any)
-      .mockResolvedValueOnce({ id: "role_owner" })
-      .mockResolvedValueOnce({ id: "role_admin" })
-      .mockResolvedValueOnce({ id: "role_staff" })
+    ;(prisma.permission.findMany as any).mockResolvedValue([
+      { id: "perm_1", code: "conversation.read" },
+      { id: "perm_2", code: "conversation.reply" },
+      { id: "perm_3", code: "patient.read" },
+    ])
+    ;(prisma.role.createMany as any).mockResolvedValue({ count: 3 })
+    ;(prisma.role.findMany as any).mockResolvedValue([
+      { id: "role_owner", name: "owner" },
+      { id: "role_admin", name: "admin" },
+      { id: "role_staff", name: "staff" },
+    ])
+    ;(prisma.rolePermission.createMany as any).mockResolvedValue({ count: 10 })
     ;(prisma.user.create as any).mockImplementation(async ({ data }: any) => ({
       id: "user_new",
       clinicId: data.clinicId,
@@ -236,7 +243,7 @@ describe("registerClinic", () => {
     expect("session" in result).toBe(true)
     if ("session" in result) {
       expect(result.user.email).toBe("dr.jones@clinic.com")
-      expect(prisma.role.create).toHaveBeenCalledTimes(3)
+      expect(prisma.role.createMany).toHaveBeenCalled()
       expect(prisma.user.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ email: "dr.jones@clinic.com" }) }),
       )
@@ -286,7 +293,7 @@ describe("registerClinic", () => {
     ;(prisma.user.findUnique as any).mockResolvedValue(null)
     ;(prisma.clinic.create as any).mockResolvedValue({ id: "clinic_x", name: "X", slug: "x" })
     ;(prisma.permission.findMany as any).mockResolvedValue([])
-    ;(prisma.role.create as any).mockRejectedValue(new Error("boom"))
+    ;(prisma.role.createMany as any).mockRejectedValue(new Error("boom"))
 
     await expect(registerClinic({
       name: "Dr. Jones",

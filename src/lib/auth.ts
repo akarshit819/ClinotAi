@@ -475,24 +475,52 @@ export async function verifyAccessToken(token: string): Promise<JWTPayload | nul
 const DEFAULT_ROLE_NAMES = ["owner", "admin", "staff"]
 
 export async function ensureClinicRoles(tx: any, clinicId: string): Promise<Record<string, string>> {
+  const allPermissionCodes = [
+    ...getDefaultPermissions("owner"),
+    ...getDefaultPermissions("admin"),
+    ...getDefaultPermissions("staff"),
+  ]
+  const uniqueCodes = Array.from(new Set(allPermissionCodes))
+  const permissions = await tx.permission.findMany({
+    where: { code: { in: uniqueCodes } },
+    select: { id: true, code: true },
+  })
+  const permByCode = new Map<string, string>(permissions.map((p: any) => [p.code, p.id]))
+
+  const rolesToCreate = DEFAULT_ROLE_NAMES.map((roleName) => ({
+    clinicId,
+    name: roleName,
+    description: `Default ${roleName} role`,
+    isSystem: true,
+  }))
+  await tx.role.createMany({
+    data: rolesToCreate,
+    skipDuplicates: true,
+  })
+
+  const createdRoleRecords = await tx.role.findMany({
+    where: { clinicId, name: { in: DEFAULT_ROLE_NAMES }, isSystem: true },
+    select: { id: true, name: true },
+  })
+  const roleByName = new Map<string, string>(createdRoleRecords.map((r: any) => [r.name, r.id]))
+
+  const rolePermissionData: { roleId: string; permissionId: string }[] = []
+  for (const roleName of DEFAULT_ROLE_NAMES) {
+    const roleId = roleByName.get(roleName)
+    if (!roleId) continue
+    for (const code of getDefaultPermissions(roleName)) {
+      const permId = permByCode.get(code)
+      if (permId) rolePermissionData.push({ roleId, permissionId: permId })
+    }
+  }
+  if (rolePermissionData.length > 0) {
+    await tx.rolePermission.createMany({ data: rolePermissionData, skipDuplicates: true })
+  }
+
   const roleIds: Record<string, string> = {}
   for (const roleName of DEFAULT_ROLE_NAMES) {
-    const permissions = await tx.permission.findMany({
-      where: { code: { in: getDefaultPermissions(roleName) } },
-      select: { id: true },
-    })
-    const role = await tx.role.create({
-      data: {
-        clinicId,
-        name: roleName,
-        description: `Default ${roleName} role`,
-        isSystem: true,
-      },
-    })
-    for (const perm of permissions) {
-      await tx.rolePermission.create({ data: { roleId: role.id, permissionId: perm.id } })
-    }
-    roleIds[roleName] = role.id
+    const id = roleByName.get(roleName)
+    if (id) roleIds[roleName] = id
   }
   return roleIds
 }
