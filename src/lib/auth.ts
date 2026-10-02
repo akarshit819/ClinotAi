@@ -526,10 +526,14 @@ export async function registerClinic(data: {
   const passwordHash = await hashPassword(data.password)
   const slug = generateClinicSlug(clinicName)
 
-  let user: any
+  // Split into two short transactions to avoid PgBouncer transaction timeout (P2028)
+  // on Supabase Session Pooler. First: create clinic + roles. Second: create user.
   let clinic: any
+  let roleIds: Record<string, string>
+  let user: any
 
   try {
+    // Transaction 1: Create clinic and system roles (short-lived)
     const created = await prisma.$transaction(async (tx) => {
       const newClinic = await tx.clinic.create({
         data: { name: clinicName, slug },
@@ -537,9 +541,17 @@ export async function registerClinic(data: {
 
       const roleIds = await ensureClinicRoles(tx, newClinic.id)
 
+      return { clinic: newClinic, roleIds }
+    })
+
+    clinic = created.clinic
+    roleIds = created.roleIds
+
+    // Transaction 2: Create the owner user (short-lived)
+    user = await prisma.$transaction(async (tx) => {
       const newUser = await tx.user.create({
         data: {
-          clinicId: newClinic.id,
+          clinicId: clinic.id,
           email,
           passwordHash,
           name,
@@ -548,11 +560,8 @@ export async function registerClinic(data: {
         include: { role: true },
       })
 
-      return { user: newUser, clinic: newClinic }
+      return newUser
     })
-
-    user = created.user
-    clinic = created.clinic
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       return { error: "An account with this email already exists. Please log in instead.", status: 409 }
