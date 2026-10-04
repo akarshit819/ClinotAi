@@ -107,7 +107,7 @@ professional: bug/feature templates, PR template with security checklist. No `CO
 - [x] Build passing (83/83 pages)
 - [ ] v0.1.0 ready — blocked (see release section)
 - [ ] GitHub settings ready — MANUAL
-- [x] Pushed (see Final Launch Status)
+- [ ] Pushed — blocked: no authenticated GitHub access in this environment (see Final Launch Status)
 
 ## Final Launch Status
 
@@ -130,8 +130,11 @@ all committed. No fabricated claims; no compliance statements.
 Verification: typecheck clean, lint clean, tests 633 passed / 11 skipped (one transient single-failure run,
 green on three other runs — flaky, unrelated to this docs/assets-only phase), build 83/83 pages.
 
-Git: `30db571` (2A) + `2873289` (2B) + `7614a5c` (launch prep) + this final commit, normal (non-force) push to
-`origin/main`. No history rewritten.
+Git: `30db571` (2A) + `2873289` (2B) + `7614a5c` (launch prep) + final visuals commit, all local.
+Push attempted 2026-10-04 but **failed: no authenticated GitHub access** in this environment (no `gh`, no
+credential helper; `git push` prompts for a username with no TTY). Remote verified reachable and correct via
+read-only `git ls-remote` (`origin/main` currently at `60d7ddc`). No history rewritten. To publish, run from
+an authenticated shell: `git push origin main` (normal push, 4 commits). Then verify the CI `verify` job.
 
 GitHub: description/topics/social-preview/release/visibility are manual GitHub.com tasks
 (`docs/GITHUB_SETUP.md`); CI runs automatically on push; no release or tag created (not authorized).
