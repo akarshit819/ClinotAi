@@ -1,0 +1,30 @@
+Clinot AI — Proprietary License
+
+Copyright (c) 2026 Akarshit Rajput / Clinot AI. All rights reserved.
+
+1. Visibility. This repository is publicly accessible for viewing, transparency,
+   and portfolio purposes only. Public visibility does not grant any reuse rights.
+   The code can technically be cloned or downloaded; this license defines what you
+   may and may not do with it.
+
+2. No reuse without permission. Except with explicit prior written permission from
+   the copyright holder, you may not copy, modify, adapt, translate, redistribute,
+   sublicense, publish, display, sell, lease, or otherwise commercially exploit the
+   software or any part of it, in source or compiled form.
+
+3. No derivative commercial products. You may not use this software, in whole or in
+   part, to create derivative works, competing products, rebranded versions, or
+   commercial offerings without explicit prior written permission.
+
+4. No trademark rights. "Clinot", the Clinot AI name, logo, and related branding
+   are not granted for reuse under this license. No trademark rights are conveyed,
+   registered or otherwise.
+
+5. Third-party components. Third-party dependencies included via package managers
+   remain governed solely by their own licenses. Nothing in this license modifies
+   or claims ownership over those components.
+
+6. No warranty. The software is provided "as is", without warranty of any kind,
+   express or implied, including fitness for a particular purpose. The software is
+   not a medical device and provides no clinical advice, diagnosis, or certification
+   of any kind.

@@ -1,37 +1,36 @@
-# License decision (required before reuse or public launch)
+# License decision — FINAL: public repository + proprietary code
 
-Current state: **no license granted** — `package.json` is `private: true`, no `LICENSE` file exists, and the
-README states all rights reserved. Nothing below takes effect until a choice is made and a `LICENSE` file is
-added. This is not legal advice.
+**Decision (2026-10-04): the repository stays PUBLIC for visibility, and the code is PROPRIETARY
+(All Rights Reserved) under the root [LICENSE](../LICENSE).** No permissive open-source license
+(MIT, Apache-2.0, BSD, GPL, AGPL, MPL) was selected, and none applies.
 
-## Option A — MIT
+## Why the repository is public
 
-- Permissive: anyone can use, copy, modify, and sell the code with attribution.
-- Best if the goal is maximum portfolio visibility, community contributions, and recruiter goodwill.
-- Trade-off: competitors (including other dental SaaS) may reuse the code freely.
+Portfolio, credibility, documentation, and professional visibility: visitors can read the code,
+architecture, and engineering record. Public visibility grants no reuse rights — it only allows viewing.
 
-## Option B — Apache-2.0
+## Why no permissive open-source license
 
-- Permissive like MIT, plus an explicit patent grant and clearer contribution terms.
-- Best if the project may receive outside contributors or the author wants patent-level clarity.
-- Trade-off: same commercial-reuse exposure as MIT; slightly longer license text to maintain.
+A permissive license would grant anyone the right to reuse, redistribute, sell, rebrand, or build
+competing commercial products from this code. That is explicitly not intended. `package.json` remains
+`private: true`, and no open-source license classifier should be selected on GitHub (leaving it unset
+is correct — do not pick MIT/Apache/GPL just to display a badge).
 
-## Option C — All Rights Reserved / proprietary (no open-source license)
+## What users may do
 
-- Nobody may reuse, redistribute, or build on the code; viewing is all GitHub visitors get.
-- Best if Clinot is intended as a commercial product and the repository is a showroom, not a commons.
-- Trade-off: no community contributions; some engineers/recruiters value open-source collaboration history.
+- View and read the repository contents on GitHub.
+- Reference it (e.g. link to it) for evaluation or discussion.
 
-## Recommendation
+## What users may not do without explicit written permission
 
-For an AI SaaS product project whose primary value is the live product and the engineering record — not
-library reuse — **start with Option C** (current state, nothing to do) while the product direction is
-undecided, and switch to **MIT** only when deliberately inviting community use. If contributions arrive
-before that decision, **Apache-2.0** is the safer permissive pick.
+- Copy, modify, redistribute, sublicense, publish, or sell the code.
+- Create derivative or competing commercial products, or rebrand Clinot as their own.
+- Reuse the Clinot name, logo, or branding (no trademark rights granted).
 
-## Enactment checklist (when authorized)
+## Notes
 
-1. Add the chosen `LICENSE` file at the repository root.
-2. Set `package.json` `license` field accordingly (and reconsider `private: true`).
-3. Add a license badge to the README hero.
-4. Note the change under `CHANGELOG.md` → Unreleased.
+- Third-party dependencies keep their own licenses; this decision claims no ownership over them.
+- Public accessibility does not technically prevent cloning — the license defines permitted use, not
+  technical access. No claim is made that GitHub prevents downloading.
+- If the product direction ever favors community use, revisit this decision explicitly (MIT for maximum
+  reach, Apache-2.0 for patent clarity) — do not drift into it by accident.

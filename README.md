@@ -219,9 +219,15 @@ No production usage, customers, revenue, uptime, SLA, or compliance certificatio
 
 ## License
 
-No open-source license has been granted yet (`private: true`) — all rights reserved. Options and
-recommendation: [docs/LICENSE_DECISION.md](docs/LICENSE_DECISION.md). Do not reuse this code until a
-license is chosen.
+Clinot AI is proprietary software.
+
+The source code is publicly visible for transparency and portfolio purposes, but it is not licensed for
+unrestricted reuse, redistribution, modification, or commercial exploitation.
+
+See [LICENSE](./LICENSE). Background and alternatives considered:
+[docs/LICENSE_DECISION.md](docs/LICENSE_DECISION.md).
+
+"Clinot", the Clinot AI name, logo, and branding are not granted for reuse by this repository license.
 
 <div align="center">
 
