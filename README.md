@@ -1,5 +1,7 @@
 # Clinot AI
 
+<img src="public/brand/clinot-logo.png" alt="Clinot AI logo" width="110" />
+
 **AI-powered dental clinic management and patient communication.**
 
 Clinot gives dental clinics one workspace for appointments, patient records, a shared conversation inbox,

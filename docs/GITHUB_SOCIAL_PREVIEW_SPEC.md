@@ -1,7 +1,10 @@
-# GitHub Social Preview — specification (manual task)
+# GitHub Social Preview — created from real branding
 
-No image tooling is available in this environment, so no preview image was generated. Create `1280×640` PNG
-from existing branding only (`public/brand/clinot-logo.png`, navy/white palette used by the landing pages):
+Created: `docs/assets/social-preview.png` (`1280×640`, ~77KB) using the real logo
+(`public/brand/clinot-logo.png`, verified transparent RGBA) composed with Pillow on a navy gradient.
+No screenshots, no statistics, no claims. Upload via GitHub → repository Settings → Social preview.
+
+Original build specification (kept for reproducibility):
 
 - Background: white (or the landing hero gradient).
 - Left: Clinot logo at legible size.

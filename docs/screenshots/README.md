@@ -1,9 +1,26 @@
-# Screenshots — manual capture required
+# Screenshots — manual file transfer required
 
-No screenshots have been captured yet. Availability check (2026-10-04): no browser, no
-Playwright/Puppeteer, no Chromium/Edge binary, no image tooling in this environment — and screenshots must
-be **real** captures of the running application, never generated or fabricated. Do not commit AI-generated
-mockups here.
+No screenshot files are committed yet. Availability check (2026-10-04): no browser, no
+Playwright/Puppeteer, no Chromium/Edge binary in this environment — and screenshots must be **real**
+captures of the running application, never generated or fabricated. Do not commit AI-generated mockups here.
+
+## Assets received in conversation (not yet files)
+
+Real Clinot captures were supplied in conversation on 2026-10-04 and reviewed visually. They are **not**
+on disk in this environment, so they could not be committed. To publish them, save each with the exact
+filename below into this directory:
+
+| Received asset | Save as | Safety review |
+|---|---|---|
+| Clinic Overview dashboard (1 patient, zeros elsewhere, no PII) | `dashboard.png` | Clean — counts only, no PII visible |
+| Appointments page + details ("Example" / "EXAMPLE REASON" / "Demo Admin") | `appointments.png` | Flagged — phone `918700879401` looks like a real-format number; confirm it is synthetic demo data or replace with an obviously fake number before publishing |
+| Landing hero ("Your clinic's AI front desk") | optional `landing-hero.png` | Clean — marketing copy, no PII |
+| "Live in three steps" section | optional `how-it-works.png` | Clean — no PII |
+| "AI Receptionist in Under 30 Minutes" section | optional `onboarding-steps.png` | Clean — no PII |
+| Blue CTA banner | optional `cta-banner.png` | Clean — no PII |
+
+Still missing (no asset received): `patients.png`, `inbox.png`, `ai-receptionist.png` (`/chat`),
+`integrations.png`. Do not claim the set is complete until all six required files exist.
 
 ## How to capture
 

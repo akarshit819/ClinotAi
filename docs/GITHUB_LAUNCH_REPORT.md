@@ -95,16 +95,46 @@ professional: bug/feature templates, PR template with security checklist. No `CO
 
 ## Final Checklist
 
-- [x] README finalized (pending screenshot embeds)
-- [ ] Screenshots added — MANUAL
-- [ ] Social preview ready — MANUAL (spec exists)
+- [x] README finalized (logo embedded; screenshot embeds pending files)
+- [ ] Screenshots added — MANUAL (2 app captures + 4 landing sections received in conversation, not on disk)
+- [x] Social preview created (`docs/assets/social-preview.png`, real logo, 1280×640)
 - [x] Repository description ready (documented, not applied)
 - [x] Topics ready (documented, not applied)
 - [x] Demo verified (healthy 2026-10-04; availability not guaranteed)
 - [ ] License decided — MANUAL
 - [x] CI passing (config verified; runs on push)
-- [x] Tests passing (633 passed / 11 skipped)
+- [x] Tests passing (633 passed / 11 skipped; one flaky single-failure run, green on re-runs)
 - [x] Build passing (83/83 pages)
 - [ ] v0.1.0 ready — blocked (see release section)
 - [ ] GitHub settings ready — MANUAL
-- [ ] Ready to push — awaiting explicit authorization
+- [x] Pushed (see Final Launch Status)
+
+## Final Launch Status
+
+Repository: https://github.com/akarshit819/ClinotAi
+
+Assets:
+
+- Logo: pre-existing `public/brand/clinot-logo.png` (verified transparent RGBA, identical to supplied branding);
+  embedded in README hero at 110px.
+- Screenshots: exports from conversation attachments are not possible from this environment (no file access to
+  attached images, no browser tooling). Received set recorded in `docs/screenshots/README.md`: `dashboard.png`
+  (clean) and `appointments.png` (flagged — phone `918700879401` must be confirmed synthetic before publishing);
+  still missing `patients.png`, `inbox.png`, `ai-receptionist.png`, `integrations.png`.
+- Social preview: `docs/assets/social-preview.png` created with Pillow from the real logo (navy gradient,
+  white/muted text, accent bar; no UI, no stats). Upload manually via Settings → Social preview.
+
+Documentation: README (hero + preview honesty), architecture, AI, security, deployment, roadmap, changelog —
+all committed. No fabricated claims; no compliance statements.
+
+Verification: typecheck clean, lint clean, tests 633 passed / 11 skipped (one transient single-failure run,
+green on three other runs — flaky, unrelated to this docs/assets-only phase), build 83/83 pages.
+
+Git: `30db571` (2A) + `2873289` (2B) + `7614a5c` (launch prep) + this final commit, normal (non-force) push to
+`origin/main`. No history rewritten.
+
+GitHub: description/topics/social-preview/release/visibility are manual GitHub.com tasks
+(`docs/GITHUB_SETUP.md`); CI runs automatically on push; no release or tag created (not authorized).
+
+Remaining manual tasks: transfer the 2 received screenshots + capture the 4 missing ones (confirm phone is
+synthetic), upload the social preview, decide license, apply GitHub settings, then tag `v0.1.0`.
