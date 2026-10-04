@@ -1,16 +1,31 @@
+<div align="center">
+
+<img src="public/brand/clinot-logo.png" alt="Clinot AI logo" width="120" />
+
 # Clinot AI
 
-<img src="public/brand/clinot-logo.png" alt="Clinot AI logo" width="110" />
+### AI-powered dental clinic management and patient communication
 
-**AI-powered dental clinic management and patient communication.**
+[![CI](https://github.com/akarshit819/ClinotAi/actions/workflows/ci.yml/badge.svg)](https://github.com/akarshit819/ClinotAi/actions/workflows/ci.yml)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)
+![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
+![Prisma](https://img.shields.io/badge/Prisma-2D3748?style=for-the-badge&logo=prisma&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
 
-Clinot gives dental clinics one workspace for appointments, patient records, a shared conversation inbox,
-and an AI receptionist that answers routine questions and captures booking requests — over WhatsApp and
-the website. Staff confirm everything; nothing is auto-confirmed.
+Clinot brings dental clinic operations, patient communication, appointments, and AI-assisted reception
+into one workspace — over WhatsApp and the website. Staff confirm everything; nothing is auto-confirmed.
 
-![CI](https://github.com/akarshit819/ClinotAi/actions/workflows/ci.yml/badge.svg)
+[Live Demo](https://clinot-ai.onrender.com) ·
+[Documentation](docs/ARCHITECTURE.md) ·
+[Architecture](docs/ARCHITECTURE.md) ·
+[AI](docs/AI.md) ·
+[Security](docs/SECURITY.md) ·
+[Roadmap](ROADMAP.md) ·
+[Changelog](CHANGELOG.md)
 
-[Live Demo](https://clinot-ai.onrender.com) · [Documentation](docs/ARCHITECTURE.md) · [Roadmap](ROADMAP.md)
+</div>
 
 ## What is Clinot?
 
@@ -22,27 +37,32 @@ receptionist that handles routine communication and hands organized requests to 
 Nothing is auto-confirmed without staff approval. The AI is a receptionist, not a clinician: it gives no
 diagnoses and escalates symptoms and emergencies to humans.
 
+<div align="center">
+
+## Product Preview
+
+</div>
+
+> Real screenshots are pending manual capture (this environment has no browser tooling; fabricated
+> screenshots are forbidden). The exact capture list lives in
+> [docs/screenshots/README.md](docs/screenshots/README.md) — dashboard, appointments, patients, inbox,
+> AI chat, and integrations.
+
 ## Features (all verified in source)
 
-- **Clinic workspace** — profile, hours, services, FAQs/knowledge base, branding, timezone-aware booking.
-- **Authentication** — custom JWT + DB sessions, argon2id passwords, refresh rotation, lockout, session management.
-- **Appointments** — deterministic booking state machine, slot filling, duplicate protection, soft-delete,
-  cancel notifications.
-- **Patients** — records linked to conversations, appointments, and leads.
-- **Inbox** — multi-channel conversations with statuses, unread counts, and staff replies.
-- **AI receptionist** — 10-route deterministic router, dental-domain allowlist (incl. Hinglish + typo tolerance),
-  guardrails, OpenRouter primary/fallback failover, DB-backed fallbacks, per-clinic usage tracking.
-- **Messaging** — WhatsApp (webhook verify + HMAC, idempotent queue, rate-limited send), Messenger/Instagram
-  connectors, website chat + embeddable widget.
-- **Billing** — Stripe plans, checkout/portal, 9 webhook handlers, history, feature gating.
-- **Security** — RBAC data model, clinic-scoped queries, CSRF/CSP/HSTS/rate-limiting, webhook verification,
-  redacted audit log. Details: [docs/SECURITY.md](docs/SECURITY.md).
+| 🗓️ Appointments | 👥 Patients | 💬 Inbox |
+| --- | --- | --- |
+| Deterministic booking state machine, slot filling, duplicate protection, soft-delete, cancel notifications. | Records linked to conversations, appointments, and leads. | Multi-channel conversations with statuses, unread counts, and staff replies. |
 
-## Product Screenshots
+| 🤖 AI Receptionist | ✉️ Messaging | 💳 Billing |
+| --- | --- | --- |
+| 10-route deterministic router, dental-domain allowlist with typo tolerance, guardrails, OpenRouter failover, DB-backed fallbacks. | WhatsApp (verified webhooks, idempotent queue, rate-limited send), Messenger/Instagram connectors, website chat + widget. | Stripe plans, checkout/portal, 9 webhook handlers, history, feature gating. |
 
-Real captures are pending manual capture (this environment has no browser tooling; fabricated screenshots are
-forbidden). The exact capture list and instructions live in [docs/screenshots/README.md](docs/screenshots/README.md)
-— dashboard, appointments, patients, inbox, AI chat, and integrations.
+| 🏥 Clinic Workspace | 🔐 Authentication & Security | 📊 Knowledge & Analytics |
+| --- | --- | --- |
+| Profile, hours, services, FAQs/knowledge base, branding, timezone-aware booking. | Custom JWT + DB sessions, argon2id passwords, clinic-scoped queries, CSRF/CSP/HSTS, verified webhooks, redacted audit log. | Clinic knowledge management, per-clinic AI usage tracking, analytics aggregations. |
+
+Details: [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Architecture
 
@@ -61,16 +81,37 @@ flowchart LR
     API --> Stripe["Stripe"]
 ```
 
-Full detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+<div align="center">
+
+**Architecture → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
+
+</div>
 
 ## AI Receptionist
 
 Deterministic routing first (emergency → booking → clinic info → symptoms → general), guardrails second,
 OpenRouter with env-driven primary + fallback models third, DB-backed fallback always. RAG retrieval and LLM
-tool-calling code exists but is **not** wired into the production path — documented honestly in
-[docs/AI.md](docs/AI.md). AI output can be inaccurate; staff review applies, especially for medical concerns.
+tool-calling code exists but is **not** wired into the production path. AI output can be inaccurate; staff
+review applies, especially for medical concerns.
+
+<div align="center">
+
+**AI system → [docs/AI.md](docs/AI.md)**
+
+</div>
 
 ## Technology Stack
+
+<div align="center">
+
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)
+![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
+![Prisma](https://img.shields.io/badge/Prisma-2D3748?style=for-the-badge&logo=prisma&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
+
+</div>
 
 | Layer | Choice |
 |---|---|
@@ -146,11 +187,16 @@ Providers: Railway, Render, Voroa. Details: [docs/DEPLOYMENT.md](docs/DEPLOYMENT
 
 ## Security
 
-Short version: verified sessions, clinic-scoped data access, audited routes, verified webhooks, strict prod
-secret validation. Limitations are documented, not hidden. Full: [docs/SECURITY.md](docs/SECURITY.md).
-Report issues privately per [SECURITY.md](SECURITY.md).
+> Security is treated as a foundation of Clinot, with verified sessions, clinic-scoped tenant isolation,
+> CSRF protection, CORS controls, security headers, webhook verification, redacted audit logging, and
+> security-focused testing. Limitations are documented, not hidden.
+
+Full: [docs/SECURITY.md](docs/SECURITY.md). Report issues privately per [SECURITY.md](SECURITY.md).
+No compliance certifications are claimed.
 
 ## Current Status
+
+Pre-release (`v0.1.0` proposed, not tagged — see [CHANGELOG.md](CHANGELOG.md)).
 
 Working: clinic workspaces, auth/RBAC model, appointments, patients, inbox, AI receptionist with guardrails and
 failover, WhatsApp messaging, website chat, Stripe billing, knowledge base, analytics aggregations, job system,
@@ -163,14 +209,13 @@ use clinic features — pending authorization-model decision). Tracked in [ROADM
 
 No production usage, customers, revenue, uptime, SLA, or compliance certifications are claimed.
 
-## Roadmap
+## Documentation
 
-- [ROADMAP.md](ROADMAP.md) — completed, in-progress, planned, future.
-- [CHANGELOG.md](CHANGELOG.md) — begins from the current state (no historical tags).
-
-## Contributing
-
-- [CONTRIBUTING.md](CONTRIBUTING.md) — setup, checks, PR expectations.
+| Documentation | | |
+| --- | --- | --- |
+| [Architecture](docs/ARCHITECTURE.md) | [AI](docs/AI.md) | [Security](docs/SECURITY.md) |
+| [Deployment](docs/DEPLOYMENT.md) | [Database](docs/DATABASE.md) | [Audit](docs/GITHUB_PROFESSIONALIZATION_AUDIT.md) |
+| [Roadmap](ROADMAP.md) | [Contributing](CONTRIBUTING.md) | [Changelog](CHANGELOG.md) |
 
 ## License
 
@@ -178,9 +223,10 @@ No open-source license has been granted yet (`private: true`) — all rights res
 recommendation: [docs/LICENSE_DECISION.md](docs/LICENSE_DECISION.md). Do not reuse this code until a
 license is chosen.
 
-## Links
+<div align="center">
 
-- Repository: `https://github.com/akarshit819/ClinotAi`
-- Live deployment (from project history, availability not guaranteed): `https://clinot-ai.onrender.com`
-- Docs: [Architecture](docs/ARCHITECTURE.md) · [AI](docs/AI.md) · [Security](docs/SECURITY.md) ·
-  [Deployment](docs/DEPLOYMENT.md) · [Database](docs/DATABASE.md) · [Audit](docs/GITHUB_PROFESSIONALIZATION_AUDIT.md)
+Built for modern dental clinics — routine questions answered, appointments captured, team in control.
+
+**Clinot AI** · [Live Demo](https://clinot-ai.onrender.com) · [Documentation](docs/ARCHITECTURE.md)
+
+</div>
