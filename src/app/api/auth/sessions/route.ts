@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { prisma } from "@/lib/db"
 import { extractBearerToken, verifyAccessToken, getActiveSessions, revokeSession } from "@/lib/auth"
 
 export async function GET(req: NextRequest) {
@@ -52,6 +53,16 @@ export async function DELETE(req: NextRequest) {
 
     if (sessionIdToRevoke === payload.sessionId) {
       return NextResponse.json({ error: "Cannot revoke current session. Use logout instead." }, { status: 400 })
+    }
+
+    // Ownership check: only revoke sessions belonging to the caller.
+    // Return 404 for foreign/missing IDs so existence is not leaked.
+    const target = await prisma.session.findUnique({
+      where: { id: sessionIdToRevoke },
+      select: { userId: true },
+    })
+    if (!target || target.userId !== payload.userId) {
+      return NextResponse.json({ error: "Session not found" }, { status: 404 })
     }
 
     await revokeSession(sessionIdToRevoke)

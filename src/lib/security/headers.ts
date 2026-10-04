@@ -62,12 +62,47 @@ export function isBot(userAgent: string): boolean {
   return BOT_USER_AGENT_PATTERNS.some((p) => p.test(userAgent))
 }
 
-export function getCorsHeaders(allowedOrigins: string[]): Record<string, string> {
-  return {
-    "Access-Control-Allow-Origin": allowedOrigins.join(", "),
-    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-CSRF-Token",
-    "Access-Control-Allow-Credentials": "true",
-    "Access-Control-Max-Age": "86400",
+const CORS_BASE_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-CSRF-Token",
+  "Access-Control-Max-Age": "86400",
+  Vary: "Origin",
+}
+
+/**
+ * Correct per-origin CORS headers.
+ *
+ * Never emits a comma-joined multi-origin list: with
+ * `Access-Control-Allow-Credentials: true` the ACAO value must be a
+ * single origin (or `*` is forbidden with credentials). Disallowed or
+ * missing origins get no ACAO/credentials headers (fail-closed).
+ */
+export function getCorsHeadersForOrigin(
+  requestOrigin: string | null | undefined,
+  allowedOrigins: string[],
+): Record<string, string> {
+  if (!requestOrigin || !allowedOrigins.includes(requestOrigin)) {
+    return { ...CORS_BASE_HEADERS }
   }
+  return {
+    ...CORS_BASE_HEADERS,
+    "Access-Control-Allow-Origin": requestOrigin,
+    "Access-Control-Allow-Credentials": "true",
+  }
+}
+
+/**
+ * Legacy helper (no request context). Safe fail-closed behavior:
+ * emits ACAO only when exactly one origin is configured; otherwise
+ * omits ACAO/credentials so callers must use getCorsHeadersForOrigin().
+ */
+export function getCorsHeaders(allowedOrigins: string[]): Record<string, string> {
+  if (allowedOrigins.length === 1) {
+    return {
+      ...CORS_BASE_HEADERS,
+      "Access-Control-Allow-Origin": allowedOrigins[0],
+      "Access-Control-Allow-Credentials": "true",
+    }
+  }
+  return { ...CORS_BASE_HEADERS }
 }

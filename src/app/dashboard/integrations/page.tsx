@@ -528,7 +528,7 @@ export default function IntegrationsPage() {
           <div>
             <p className="text-sm font-semibold text-navy-700 dark:text-navy-200 mb-0.5">How integrations work</p>
             <p className="text-xs text-navy-400 leading-relaxed">
-              Each connected channel feeds patient messages into Clinot's universal inbox. The AI Receptionist
+              Each connected channel feeds patient messages into Clinot&apos;s universal inbox. The AI Receptionist
               responds automatically. Your team only gets notified for appointments, emergencies, or when confidence
               is low. Real webhooks, real APIs, no fake data.
             </p>

@@ -54,16 +54,39 @@ export function setAuditContext(context: { ip?: string; userAgent?: string }): v
   CURRENT_SESSION.userAgent = context.userAgent
 }
 
+/**
+ * Key names whose values must never reach the audit log in cleartext.
+ * Matched case-insensitively against the key (substring); the value is
+ * replaced with "[REDACTED]" while the key is preserved so the shape of
+ * the event stays useful. `password` values are dropped entirely
+ * (historical behavior preserved).
+ */
+const SENSITIVE_KEY_PATTERN =
+  /passw|secret|token|jwt|api[_-]?key|apikey|authorization|cookie|session[_-]?token|database|postgres|openrouter|whatsapp|waba|wa[_-]?token|meta[_-]|stripe|resend|encrypt|credential|private[_-]?key/i
+
+export function redactSensitiveDetails(details: Record<string, unknown>): Record<string, unknown> {
+  const redacted: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(details)) {
+    if (/^passw/i.test(key)) continue
+    if (SENSITIVE_KEY_PATTERN.test(key)) {
+      redacted[key] = "[REDACTED]"
+      continue
+    }
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+      redacted[key] = redactSensitiveDetails(value as Record<string, unknown>)
+      continue
+    }
+    redacted[key] = value
+  }
+  return redacted
+}
+
 export async function recordAuditEvent(entry: AuditEntry): Promise<void> {
   const ip = entry.ip || CURRENT_SESSION.ip || "unknown"
   const userAgent = entry.userAgent || CURRENT_SESSION.userAgent || "unknown"
   const severity = entry.severity || "info"
 
-  const details = entry.details || {}
-
-  if (details.password) delete details.password
-  if (details.token) details.token = "[REDACTED]"
-  if (details.apiKey) details.apiKey = "[REDACTED]"
+  const details = redactSensitiveDetails(entry.details || {})
 
   try {
     await prisma.auditLog.create({

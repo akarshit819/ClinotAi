@@ -1,30 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import { checkRateLimit, rateLimitKey, rateLimitHeaders, type RateLimitScope } from "@/lib/security/rate-limit"
 import { getCSPDirectives, getSecurityHeaders } from "@/lib/security/headers"
+import { decideCsrf } from "@/lib/security/csrf-check"
 import { isProduction } from "@/lib/env"
-import { isPublicPath, shouldBypassCsrf, ONBOARDING_EXEMPT_PATHS } from "@/lib/routing"
-
-function isMissingOrigin(request: NextRequest): boolean {
-  if (!request.headers.get("origin") && !request.headers.get("referer")) return true
-  return false
-}
-
-function isSameOrigin(request: NextRequest, appUrl: string): boolean {
-  const origin = (request.headers.get("origin") || "").replace(/\/+$/, "")
-  const referer = (request.headers.get("referer") || "").replace(/\/+$/, "")
-  const normalizedAppUrl = appUrl.replace(/\/+$/, "")
-
-  if (normalizedAppUrl && origin.startsWith(normalizedAppUrl)) return true
-  if (normalizedAppUrl && referer.startsWith(normalizedAppUrl)) return true
-
-  const host = request.headers.get("host")
-  if (host && origin) {
-    const protocol = request.nextUrl.protocol || "https:"
-    if (origin === `${protocol}//${host}`) return true
-  }
-
-  return false
-}
+import { isPublicPath, shouldBypassCsrf } from "@/lib/routing"
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -40,8 +19,8 @@ export async function middleware(request: NextRequest) {
   response.headers.set("X-Robots-Tag", "noindex, nofollow")
 
   if (isProduction()) {
-    const csp = getCSPDirectives(isProduction())
-    response.headers.set("Content-Security-Policy", Object.entries(csp).map(([k, v]) => `${k} ${v}`).join("; "))
+    // getCSPDirectives() already returns a complete, valid policy string.
+    response.headers.set("Content-Security-Policy", getCSPDirectives(true))
   }
 
   if (method === "OPTIONS") {
@@ -67,19 +46,6 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  if (pathname.startsWith("/api/") && !shouldBypassCsrf(pathname) && !["GET", "HEAD", "OPTIONS"].includes(method)) {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || ""
-    if (!isMissingOrigin(request)) {
-      const origin = request.headers.get("origin")
-      const referer = request.headers.get("referer")
-      if (!isSameOrigin(request, appUrl)) {
-        if (appUrl || origin || referer) {
-          return NextResponse.json({ error: "CSRF validation failed" }, { status: 403 })
-        }
-      }
-    }
-  }
-
   const cookieHeader = request.headers.get("cookie") || ""
   const getCookie = (name: string) => {
     const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`))
@@ -87,6 +53,25 @@ export async function middleware(request: NextRequest) {
   }
 
   const accessToken = getCookie("access_token")
+
+  if (pathname.startsWith("/api/") && !shouldBypassCsrf(pathname) && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const decision = decideCsrf({
+      method,
+      isExempt: false,
+      // CSRF is a cookie-ambient attack: only enforce the origin check
+      // when the request carries cookie auth. Bearer-token (server to
+      // server) traffic skips it; webhooks are already exempt above.
+      hasCookieAuth: Boolean(accessToken),
+      origin: request.headers.get("origin") || "",
+      referer: request.headers.get("referer") || "",
+      host: request.headers.get("host") || "",
+      protocol: request.nextUrl.protocol || "https:",
+      appUrl: process.env.NEXT_PUBLIC_APP_URL || "",
+    })
+    if (decision !== "allow" && decision !== "skip") {
+      return NextResponse.json({ error: "CSRF validation failed" }, { status: 403 })
+    }
+  }
 
   if (pathname.startsWith("/api/") || pathname.startsWith("/dashboard")) {
     if (!isPublicPath(pathname) && !pathname.startsWith("/api/webhooks")) {
@@ -97,10 +82,6 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(new URL("/login", request.url))
       }
     }
-  }
-
-  if (pathname.startsWith("/dashboard") && !ONBOARDING_EXEMPT_PATHS.some((p) => pathname.startsWith(p))) {
-    response.headers.set("x-access-token", accessToken || "")
   }
 
   const userAgent = request.headers.get("user-agent") || ""

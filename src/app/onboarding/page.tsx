@@ -142,7 +142,7 @@ export default function OnboardingPage() {
       <div className="max-w-2xl mx-auto px-4 py-12">
         <div className="text-center mb-10">
           <h1 className="text-2xl font-bold text-navy-900">Welcome to Clinot</h1>
-          <p className="text-sm text-navy-400 mt-1">Let's set up your clinic in a few steps</p>
+          <p className="text-sm text-navy-400 mt-1">Let&apos;s set up your clinic in a few steps</p>
         </div>
 
         <div className="flex items-center justify-center gap-2 mb-10">
@@ -296,7 +296,7 @@ export default function OnboardingPage() {
           {step === 5 && (
             <div className="space-y-4">
               <div className="p-4 rounded-xl bg-navy-25 border border-navy-100">
-                <p className="text-sm text-navy-700 font-medium mb-1">You're almost done!</p>
+                <p className="text-sm text-navy-700 font-medium mb-1">You&apos;re almost done!</p>
                 <p className="text-xs text-navy-400">
                   Your AI Receptionist is ready. It will handle patient inquiries, schedule appointments,
                   and forward emergencies to your team. Review your settings in the dashboard anytime.

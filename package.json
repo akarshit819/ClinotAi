@@ -2,6 +2,9 @@
   "name": "clinot-ai",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=18.17"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -11,6 +14,8 @@
     "start:voroa": "sh voroa-start.sh",
     "start:railway": "sh railway-start.sh",
     "lint": "next lint",
+    "format": "prettier --write \"src/**/*.{ts,tsx,js,json,css}\" \"tests/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,js,json,css}\" \"tests/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "postinstall": "prisma generate",

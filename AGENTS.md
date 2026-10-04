@@ -18,6 +18,8 @@ npm run test         # Run vitest tests
 ```
 
 ## Database
+PostgreSQL is the source of truth in production (Prisma migrations, applied via `db:migrate:deploy` at boot).
+Local dev may use a throwaway SQLite file via `.env` (`DATABASE_URL="file:./dev.db"`), but never use `db:push` or SQLite against production data.
 ```bash
 npm run db:generate      # Generate Prisma client
 npm run db:migrate:deploy # Apply migrations (production)
@@ -38,8 +40,8 @@ Demo credentials (local dev only): `admin@clinot.ai` / `admin123`
 - Next.js 14 App Router with TypeScript
 - PostgreSQL (via Prisma) with Prisma migrations - see `docs/DATABASE.md` for schema, backups, and recovery
 - Tailwind CSS for styling
-- Recharts for analytics charts
-- JSON Web Tokens for auth
+- Custom JWT + DB-session auth (HS256 access/refresh tokens, argon2id passwords)
+- Single-service runtime: `npm run start` boots the Next.js server AND the internal PostgreSQL-backed job processor (no separate worker needed); see `docs/RENDER-DEPLOYMENT.md`
 
 ## Project Structure
 - `src/app/` - Pages and API routes

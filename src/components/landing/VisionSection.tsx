@@ -10,7 +10,7 @@ export function VisionSection() {
       <div className="relative mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 text-center">
         <Badge variant="primary" size="sm" className="mb-5">The Vision</Badge>
         <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-navy-900 tracking-tight leading-[1.1] mb-6 text-balance">
-          Your Clinic Should Never Have to Say "Call Us Back During Business Hours."
+          Your Clinic Should Never Have to Say &quot;Call Us Back During Business Hours.&quot;
         </h2>
         <p className="text-base md:text-lg text-navy-400 max-w-3xl mx-auto mb-10 leading-relaxed">
           Your team works hard enough. They should not have to answer the same questions every day. They should not miss opportunities because the clinic is closed.
