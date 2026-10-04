@@ -1,219 +1,175 @@
-Clinot AI
-AI-Powered Dental Clinic Management & Patient Communication Platform
+# Clinot AI
 
-Clinot AI is an AI-assisted dental clinic management SaaS designed to help dental practices organize patient communication, appointment workflows, clinic information, and day-to-day operations through a centralized digital workspace.
+AI-assisted dental clinic management and patient communication — appointments, inbox, and an AI receptionist
+that answers routine questions and captures booking requests.
 
-Built with Next.js, React, TypeScript, Prisma, and PostgreSQL, Clinot AI brings together clinic management tools, patient records, appointment handling, AI-assisted conversations, and messaging integrations.
+![CI](https://github.com/akarshit819/ClinotAi/actions/workflows/ci.yml/badge.svg)
 
-Project Status: Actively under development
-Product Type: Dental SaaS / Clinic Management / AI-Assisted Communication
+## Overview
 
-🌐 Live Application: https://clinot-ai.onrender.com
-💻 GitHub Repository: https://github.com/akarshit819/ClinotAi
+Dental front desks answer the same questions all day — hours, pricing, insurance, availability — while new
+patient inquiries arrive after hours over WhatsApp and the website. Clinot AI centralizes that work: one
+clinic workspace with patient records, appointment requests, a shared conversation inbox, and an AI
+receptionist that handles routine communication and hands organized requests to the team for confirmation.
 
-Table of Contents
-Overview
-Vision
-Key Features
-AI-Powered Communication
-Appointment Management
-Patient Management
-Clinic Management
-Messaging and Integrations
-Technology Stack
-System Architecture
-Database Architecture
-Getting Started
-Environment Variables
-Database Setup
-Development Commands
-Background Job Processing
-AI Provider Configuration
-WhatsApp Integration
-Deployment
-Security and Privacy
-Testing and Quality Assurance
-Project Structure
-Roadmap
-Contributing
-License
-Contact
-Overview
+Nothing is auto-confirmed without staff approval. The AI is a receptionist, not a clinician: it gives no
+diagnoses and escalates symptoms and emergencies to humans.
 
-Dental clinics manage appointments, patient enquiries, service information, follow-ups, and communication across multiple channels.
+## Core features (all verified in source)
 
-Clinot AI is being developed to simplify these workflows by providing a clinic-oriented platform with AI-assisted communication and structured operational data.
+- **Clinic workspace** — profile, hours, services, FAQs/knowledge base, branding, timezone-aware booking.
+- **Authentication** — custom JWT + DB sessions, argon2id passwords, refresh rotation, lockout, session management.
+- **Appointments** — deterministic booking state machine, slot filling, duplicate protection, soft-delete,
+  cancel notifications.
+- **Patients** — records linked to conversations, appointments, and leads.
+- **Inbox** — multi-channel conversations with statuses, unread counts, and staff replies.
+- **AI receptionist** — 10-route deterministic router, dental-domain allowlist (incl. Hinglish + typo tolerance),
+  guardrails, OpenRouter primary/fallback failover, DB-backed fallbacks, per-clinic usage tracking.
+- **Messaging** — WhatsApp (webhook verify + HMAC, idempotent queue, rate-limited send), Messenger/Instagram
+  connectors, website chat + embeddable widget.
+- **Billing** — Stripe plans, checkout/portal, 9 webhook handlers, history, feature gating.
+- **Security** — RBAC data model, clinic-scoped queries, CSRF/CSP/HSTS/rate-limiting, webhook verification,
+  redacted audit log. Details: [docs/SECURITY.md](docs/SECURITY.md).
 
-The platform is designed around individual clinic workspaces. Its database structure supports clinic-specific users, roles, patients, appointments, conversations, services, FAQs, leads, integrations, and billing-related records.
+## Screenshots
 
-Clinot AI aims to reduce repetitive administrative work while helping clinic teams maintain organized patient communication.
+Real captures are pending (this environment has no browser tooling). The capture list and instructions live in
+[docs/screenshots/README.md](docs/screenshots/README.md) — dashboard, appointments, patients, inbox,
+AI chat, and integrations.
 
-The platform is intended to assist dental professionals and administrative teams. It is not a replacement for professional dental judgment, clinical diagnosis, or emergency medical care.
+## Architecture
 
-Vision
+Single-service monolith: Next.js → API routes → PostgreSQL (Prisma), with a Postgres-backed job queue and an
+internal worker in the same boot unit. No Redis, no separate services.
 
-The vision behind Clinot AI is to make modern AI-assisted clinic operations more accessible to dental practices.
+```mermaid
+flowchart LR
+    Patient["Patients\n(WhatsApp / web)"] --> Web["Next.js app"]
+    Staff["Staff (dashboard)"] --> Web
+    Web --> API["API routes\n(JWT + clinic scope)"]
+    API --> PG[("PostgreSQL")]
+    API --> Jobs[("Job queue")]
+    Worker["Internal worker"] --> Jobs
+    API --> OR["OpenRouter"]
+    API --> Stripe["Stripe"]
+```
 
-The long-term direction is to provide a centralized platform where clinics can manage patient enquiries, appointment workflows, clinic information, and communication without relying on disconnected tools.
+Full detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-Clinot AI is being built with a focus on:
+## AI receptionist
 
-Practical AI-assisted workflows.
-Reliable appointment handling.
-Organized clinic and patient data.
-Configurable clinic information.
-Integration with communication platforms.
-Maintainable and testable software architecture.
-A scalable foundation for future clinic-focused features.
-Key Features
-1. Clinic-Centric Workspace
+Deterministic routing first (emergency → booking → clinic info → symptoms → general), guardrails second,
+OpenRouter with env-driven primary + fallback models third, DB-backed fallback always. RAG retrieval and LLM
+tool-calling code exists but is **not** wired into the production path — documented honestly in
+[docs/AI.md](docs/AI.md). AI output can be inaccurate; staff review applies, especially for medical concerns.
 
-Clinot AI uses a clinic-oriented data model to organize information and workflows.
+## Technology stack
 
-Clinic-related configuration includes:
+| Layer | Choice |
+|---|---|
+| Framework | Next.js 14, React 18, TypeScript (strict) |
+| Styling | Tailwind CSS, lucide-react |
+| Database | PostgreSQL via Prisma 5 (migrations) |
+| Auth | Custom JWT + sessions, argon2id/bcrypt |
+| AI | OpenRouter gateway (single provider path) |
+| Messaging | Meta Graph API, website widget |
+| Billing | Stripe |
+| Email | Nodemailer + Resend |
+| Quality | Vitest (633 tests), ESLint, Prettier, GitHub Actions |
 
-Clinic name and profile information.
-Contact information.
-Address and timezone.
-Language and branding preferences.
-Business and opening-hour information.
-Clinic-specific services and FAQs.
-Clinic-specific users and operational records.
-2. Appointment Management
+## Project structure
 
-The application includes appointment-related data structures and workflows for managing patient appointment requests.
+```text
+src/app/            # site, auth, dashboard pages + 46 API routes
+src/components/ src/hooks/ src/contexts/
+src/lib/            # auth, db, env, ai/, appointment/, billing/, jobs/, security/
+src/messaging/      # engine, pipeline, AI receptionist, inbox, notifications
+src/integrations/   # whatsapp/messenger/instagram connectors, token store
+prisma/             # schema.prisma, migrations/
+scripts/            # start-production.js, postbuild.js, import tooling
+tests/              # 30 vitest files
+docs/               # architecture, AI, security, deployment, reports
+```
 
-Appointment records can contain:
+## Getting started
 
-Patient name.
-Contact information.
-Appointment reason.
-Preferred date and time.
-Doctor information.
-Additional notes.
-Emergency indicator.
-Appointment status.
-3. Patient Records
+```bash
+npm install
+npm run setup     # Prisma generate + local db push + seeds (local throwaway DB only)
+npm run dev       # http://localhost:3000
+```
 
-Clinot AI includes patient records designed to associate patient information with conversations and appointments.
+Local demo login (dev only): `admin@clinot.ai` / `admin123`.
 
-Patient records may include:
+## Environment variables
 
-Name.
-Phone number.
-Email address.
-Notes.
-Conversation history associations.
-Appointment associations.
-Communication platform profiles.
-4. AI-Assisted Conversations
+| Variable | Required | Purpose |
+|---|---|---|
+| `DATABASE_URL` | Prod: yes | PostgreSQL connection string |
+| `JWT_SECRET` / `ENCRYPTION_KEY` / `CSRF_SECRET` | Prod: yes, 32+ chars | Signing, credential encryption, CSRF |
+| `NEXT_PUBLIC_APP_URL` | Prod: yes | Exact public URL (CSRF, emails, OAuth, webhooks) |
+| `META_APP_SECRET` / `WA_WEBHOOK_SECRET` | For inbound messaging | Webhook verification |
+| `STRIPE_SECRET_KEY` (+ price/webhook secrets) | For billing | Stripe API + webhooks |
+| `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | For live AI | Provider key + primary model |
+| `RESEND_API_KEY` / `FROM_EMAIL` | For auth emails | Password/email delivery |
+| `WHATSAPP_*` (3 vars) | For auto-provisioning | Link WhatsApp at boot |
+| `CLINOT_BOOTSTRAP_ADMIN` + `BOOTSTRAP_ADMIN_*` | First boot only | Initial owner; remove after login |
 
-The platform includes conversation and message data models to support AI-assisted communication workflows.
+See [.env.example](.env.example) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Never commit `.env`.
 
-Conversation records can track:
+## Development
 
-Conversation platform.
-Patient association.
-Message history.
-Conversation status.
-Intent and confidence metadata.
-Emergency indicators.
-Unread message counts.
-Last-message timestamps.
-5. Clinic Knowledge and FAQs
+```bash
+npm run dev         # local server
+npm run typecheck   # tsc --noEmit
+npm run lint        # next lint
+npm run format      # prettier --write (check: format:check)
+npm run test        # vitest (hermetic, no live provider calls)
+npm run build       # production build + standalone output
+```
 
-Clinot AI includes clinic-specific FAQ and knowledge-base records.
+Database: `db:generate`, `db:migrate:dev` (local), `db:migrate:deploy` (production only),
+`db:seed:system` (idempotent), `db:seed:dev` / `db:seed:whatsapp` (opt-in). Never `db:push` outside local dev.
 
-These can be used to organize information such as:
+## Deployment
 
-Clinic services.
-Frequently asked questions.
-Clinic policies.
-Operational information.
-Other clinic-specific content.
+One web service + one managed Postgres. Boot runs migrations, seeds, then the internal worker + Next.js server.
+Providers: Railway, Render, Voroa. Details: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md),
+[docs/RENDER-DEPLOYMENT.md](docs/RENDER-DEPLOYMENT.md). Health: `GET /api/health`.
 
-The exact behavior of AI responses depends on the current application implementation and configuration.
+## Security
 
-6. Integrations
+Short version: verified sessions, clinic-scoped data access, audited routes, verified webhooks, strict prod
+secret validation. Limitations are documented, not hidden. Full: [docs/SECURITY.md](docs/SECURITY.md).
+Report issues privately per [SECURITY.md](SECURITY.md).
 
-The data model supports integration-related configuration and messaging account records.
+## Current status (honest)
 
-Available integration behavior depends on the current deployment, credentials, and provider-side setup.
+Working: clinic workspaces, auth/RBAC model, appointments, patients, inbox, AI receptionist with guardrails and
+failover, WhatsApp messaging, website chat, Stripe billing, knowledge base, analytics aggregations, job system,
+boot orchestration.
 
-7. Business and Billing Data
+Incomplete or stubbed: Telegram integration (stub webhook — do not enable); Messenger/Instagram tenant mapping;
+Instagram webhook secret inconsistency; RAG-to-prompt wiring; LLM tool-calling in production; appointment
+booking/notification job handlers; calendar sync (does not exist); per-route role checks (any clinic session can
+use clinic features — pending authorization-model decision). Tracked in [ROADMAP.md](ROADMAP.md).
 
-The database includes structures for:
+No production usage, customers, revenue, uptime, SLA, or compliance certifications are claimed.
 
-Leads.
-Services.
-Subscriptions.
-Invoices.
-Billing history.
-Payment attempts.
-AI usage records.
+## Roadmap / Changelog / Contributing
 
-These structures provide a foundation for clinic-oriented business operations and monetization features.
+- [ROADMAP.md](ROADMAP.md) — completed, in-progress, planned, future.
+- [CHANGELOG.md](CHANGELOG.md) — begins from the current state (no historical tags).
+- [CONTRIBUTING.md](CONTRIBUTING.md) — setup, checks, PR expectations.
 
-AI-Powered Communication
+## License
 
-Clinot AI is designed to incorporate language-model capabilities into clinic communication workflows.
+No open-source license has been granted yet (`private: true`) — all rights reserved. A license decision
+(MIT / Apache-2.0 / proprietary) is required before reuse; see [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md).
 
-The project uses OpenRouter as its configured AI provider gateway.
+## Links
 
-The AI configuration supports:
-
-A primary model identifier.
-Optional fallback model identifiers.
-Environment-based model configuration.
-The ability to change configured models without hardcoding a new model into every workflow.
-
-The intended role of AI is to assist with routine communication and clinic information—not to independently make clinical decisions.
-
-AI-generated content may be inaccurate or incomplete. Clinics should review AI-assisted workflows appropriately, particularly when a conversation involves medical concerns.
-
-Appointment Management
-
-Appointment handling is an important part of the Clinot AI data model.
-
-The appointment structure includes fields for:
-
-Field	Description
-Patient Name	Name associated with the appointment
-Phone	Contact number
-Email	Optional email address
-Reason	Reason for the appointment
-Preferred Date	Requested appointment date
-Preferred Time	Requested appointment time
-End Time	Appointment end-time field
-Doctor	Optional doctor information
-Notes	Additional appointment details
-Emergency	Emergency indicator
-Status	Appointment workflow status
-
-Appointments are associated with a clinic and may optionally be associated with a patient record.
-
-The system is designed to support structured appointment workflows. Actual availability, confirmation, notification, and scheduling behavior depends on the current application logic and deployment configuration.
-
-Patient Management
-
-Clinot AI includes a patient-oriented database structure to support clinic operations.
-
-Patient records are associated with a clinic and can be linked to:
-
-Conversations.
-Appointments.
-Leads.
-Communication platform profiles.
-
-This structure allows the application to maintain relationships between patient information and operational activity.
-
-Access to patient information should be restricted to authorized clinic users.
-
-Clinic Management
-
-The platform's clinic model includes configuration for:
-
-Clinic identity and profile.
-Contact details.
-Country and timezone.
-Language
+- Repository: `https://github.com/akarshit819/ClinotAi`
+- Live deployment (from project history, availability not guaranteed): `https://clinot-ai.onrender.com`
+- Docs: [Architecture](docs/ARCHITECTURE.md) · [AI](docs/AI.md) · [Security](docs/SECURITY.md) ·
+  [Deployment](docs/DEPLOYMENT.md) · [Database](docs/DATABASE.md) · [Audit](docs/GITHUB_PROFESSIONALIZATION_AUDIT.md)
