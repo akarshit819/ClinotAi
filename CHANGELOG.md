@@ -3,6 +3,12 @@
 > Historical versions were never tagged, so this changelog begins from the current documented state and does
 > not reconstruct earlier history.
 
+## [v0.1.0] — Proposed (not tagged, do not treat as released)
+
+First portfolio milestone: security foundation (Phase 2A) + professional presentation (Phase 2B). Release
+is blocked on: 6 manual screenshots, license decision (`docs/LICENSE_DECISION.md`), GitHub-side settings
+(`docs/GITHUB_SETUP.md`), and a green CI run on `main`. Create the tag only when explicitly authorized.
+
 ## Unreleased
 
 ### Added

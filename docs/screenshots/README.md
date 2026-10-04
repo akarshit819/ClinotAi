@@ -1,25 +1,31 @@
-# Screenshots — manual capture list
+# Screenshots — manual capture required
 
-No screenshots have been captured yet. This environment has no browser tooling, and screenshots must be **real**
-captures of the running application — never generated or fabricated. Do not commit AI-generated mockups here.
+No screenshots have been captured yet. Availability check (2026-10-04): no browser, no
+Playwright/Puppeteer, no Chromium/Edge binary, no image tooling in this environment — and screenshots must
+be **real** captures of the running application, never generated or fabricated. Do not commit AI-generated
+mockups here.
 
 ## How to capture
 
 1. `npm install && npm run setup && npm run dev` (local dev seed only — never production data).
-2. Log in with the local demo account and open each page below at **1440×900**, light theme.
-3. Confirm no real patient data, secrets, or API keys are visible (demo seed data is synthetic by design).
-4. Save as PNG with exactly these filenames and reference them from the root `README.md`.
+2. Log in with the local demo account (`admin@clinot.ai` / `admin123`) and seed demo content so lists are
+   non-empty (`npm run db:seed` locally; refuses in production).
+3. Viewport **1440×900**, light theme, 100% zoom. Hide bookmarks bar; close devtools.
+4. Confirm no real patient data, secrets, API keys, or private URLs are visible (demo seed data is synthetic
+   by design — patient names/phones it creates are fixtures, not real people).
+5. Save as PNG with exactly the filenames below, then reference them from the root `README.md`
+   ("Product Screenshots").
 
 ## Required shots
 
-| File | Page | Must show |
-|---|---|---|
-| `dashboard.png` | `/dashboard` | Overview cards, recent activity |
-| `appointments.png` | `/dashboard/appointments` | Appointment list with statuses |
-| `patients.png` | `/dashboard/patients` | Patient records table |
-| `inbox.png` | `/dashboard/inbox` | Conversation list + message thread |
-| `ai-receptionist.png` | `/chat` | Website chat answering a clinic question |
-| `integrations.png` | `/dashboard/integrations` | WhatsApp/Meta connection states |
+| File | Route | State needed (synthetic data) | Must show |
+|---|---|---|---|
+| `dashboard.png` | `/dashboard` | Seeded clinic with a few appointments + conversations | Overview cards, recent activity |
+| `appointments.png` | `/dashboard/appointments` | ≥3 appointments, mixed statuses | List with statuses, dates, patient names |
+| `patients.png` | `/dashboard/patients` | ≥3 demo patients | Patient records table |
+| `inbox.png` | `/dashboard/inbox` | 1 open conversation with several messages selected | Conversation list + message thread |
+| `ai-receptionist.png` | `/chat` | Ask "What are your opening hours?" with seeded clinic FAQs | Chat answering from clinic knowledge |
+| `integrations.png` | `/dashboard/integrations` | WhatsApp disconnected state (no real credentials) | Channel cards, connection states |
 
-Optional if visually useful: `billing.png` (`/dashboard/billing`), `knowledge.png` (`/dashboard/knowledge`),
-`landing.png` (`/`).
+Optional if visually useful: `billing.png` (`/dashboard/billing`), `knowledge.png`
+(`/dashboard/knowledge`), `landing.png` (`/`).

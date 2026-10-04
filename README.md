@@ -1,11 +1,16 @@
 # Clinot AI
 
-AI-assisted dental clinic management and patient communication — appointments, inbox, and an AI receptionist
-that answers routine questions and captures booking requests.
+**AI-powered dental clinic management and patient communication.**
+
+Clinot gives dental clinics one workspace for appointments, patient records, a shared conversation inbox,
+and an AI receptionist that answers routine questions and captures booking requests — over WhatsApp and
+the website. Staff confirm everything; nothing is auto-confirmed.
 
 ![CI](https://github.com/akarshit819/ClinotAi/actions/workflows/ci.yml/badge.svg)
 
-## Overview
+[Live Demo](https://clinot-ai.onrender.com) · [Documentation](docs/ARCHITECTURE.md) · [Roadmap](ROADMAP.md)
+
+## What is Clinot?
 
 Dental front desks answer the same questions all day — hours, pricing, insurance, availability — while new
 patient inquiries arrive after hours over WhatsApp and the website. Clinot AI centralizes that work: one
@@ -15,7 +20,7 @@ receptionist that handles routine communication and hands organized requests to 
 Nothing is auto-confirmed without staff approval. The AI is a receptionist, not a clinician: it gives no
 diagnoses and escalates symptoms and emergencies to humans.
 
-## Core features (all verified in source)
+## Features (all verified in source)
 
 - **Clinic workspace** — profile, hours, services, FAQs/knowledge base, branding, timezone-aware booking.
 - **Authentication** — custom JWT + DB sessions, argon2id passwords, refresh rotation, lockout, session management.
@@ -31,11 +36,11 @@ diagnoses and escalates symptoms and emergencies to humans.
 - **Security** — RBAC data model, clinic-scoped queries, CSRF/CSP/HSTS/rate-limiting, webhook verification,
   redacted audit log. Details: [docs/SECURITY.md](docs/SECURITY.md).
 
-## Screenshots
+## Product Screenshots
 
-Real captures are pending (this environment has no browser tooling). The capture list and instructions live in
-[docs/screenshots/README.md](docs/screenshots/README.md) — dashboard, appointments, patients, inbox,
-AI chat, and integrations.
+Real captures are pending manual capture (this environment has no browser tooling; fabricated screenshots are
+forbidden). The exact capture list and instructions live in [docs/screenshots/README.md](docs/screenshots/README.md)
+— dashboard, appointments, patients, inbox, AI chat, and integrations.
 
 ## Architecture
 
@@ -56,14 +61,14 @@ flowchart LR
 
 Full detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## AI receptionist
+## AI Receptionist
 
 Deterministic routing first (emergency → booking → clinic info → symptoms → general), guardrails second,
 OpenRouter with env-driven primary + fallback models third, DB-backed fallback always. RAG retrieval and LLM
 tool-calling code exists but is **not** wired into the production path — documented honestly in
 [docs/AI.md](docs/AI.md). AI output can be inaccurate; staff review applies, especially for medical concerns.
 
-## Technology stack
+## Technology Stack
 
 | Layer | Choice |
 |---|---|
@@ -143,7 +148,7 @@ Short version: verified sessions, clinic-scoped data access, audited routes, ver
 secret validation. Limitations are documented, not hidden. Full: [docs/SECURITY.md](docs/SECURITY.md).
 Report issues privately per [SECURITY.md](SECURITY.md).
 
-## Current status (honest)
+## Current Status
 
 Working: clinic workspaces, auth/RBAC model, appointments, patients, inbox, AI receptionist with guardrails and
 failover, WhatsApp messaging, website chat, Stripe billing, knowledge base, analytics aggregations, job system,
@@ -156,16 +161,20 @@ use clinic features — pending authorization-model decision). Tracked in [ROADM
 
 No production usage, customers, revenue, uptime, SLA, or compliance certifications are claimed.
 
-## Roadmap / Changelog / Contributing
+## Roadmap
 
 - [ROADMAP.md](ROADMAP.md) — completed, in-progress, planned, future.
 - [CHANGELOG.md](CHANGELOG.md) — begins from the current state (no historical tags).
+
+## Contributing
+
 - [CONTRIBUTING.md](CONTRIBUTING.md) — setup, checks, PR expectations.
 
 ## License
 
-No open-source license has been granted yet (`private: true`) — all rights reserved. A license decision
-(MIT / Apache-2.0 / proprietary) is required before reuse; see [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md).
+No open-source license has been granted yet (`private: true`) — all rights reserved. Options and
+recommendation: [docs/LICENSE_DECISION.md](docs/LICENSE_DECISION.md). Do not reuse this code until a
+license is chosen.
 
 ## Links
 
