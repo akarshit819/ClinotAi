@@ -7,7 +7,7 @@ import path from "path"
 // scripts/ is CommonJS and excluded from tsconfig; require it directly.
 // start-production.js itself cannot be imported (it runs main() on require),
 // which is why the SSL builder lives in scripts/pg-ssl.js.
-const { buildPgSslConfig } = require("../scripts/pg-ssl.js")
+const { buildPgConnectionString } = require("../scripts/pg-ssl.js")
 
 const TEST_PEM = [
   "-----BEGIN CERTIFICATE-----",
@@ -16,7 +16,8 @@ const TEST_PEM = [
   "",
 ].join("\n")
 
-const BASE_URL = "postgresql://user:pass@clinot-db-clinot.g.aivencloud.com:5432/defaultdb?sslmode=require"
+const AIVEN_URL = "postgresql://user:pass@clinot-db-clinot.g.aivencloud.com:5432/defaultdb?sslmode=require"
+const PUBLIC_URL = "postgresql://user:pass@db.render.com:5432/clinot?sslmode=require"
 
 let tmpDir = ""
 let pemPath = ""
@@ -31,25 +32,32 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true })
 })
 
-describe("buildPgSslConfig (Aiven CA trust, verification always on)", () => {
-  it("returns undefined when PGSSLROOTCERT is unset (pg defaults preserved)", () => {
-    expect(buildPgSslConfig({ databaseUrl: BASE_URL, env: {} })).toBeUndefined()
+function sslrootcertOf(url: string): string | null {
+  return new URL(url).searchParams.get("sslrootcert")
+}
+
+describe("buildPgConnectionString (Aiven CA trust, verification always on)", () => {
+  it("returns the original string untouched when PGSSLROOTCERT is unset", () => {
+    expect(buildPgConnectionString({ databaseUrl: PUBLIC_URL, env: {} })).toBe(PUBLIC_URL)
   })
 
-  it("returns undefined when PGSSLROOTCERT is empty/blank", () => {
-    expect(buildPgSslConfig({ databaseUrl: BASE_URL, env: { PGSSLROOTCERT: "   " } })).toBeUndefined()
+  it("returns the original string untouched when PGSSLROOTCERT is blank", () => {
+    expect(buildPgConnectionString({ databaseUrl: PUBLIC_URL, env: { PGSSLROOTCERT: "   " } })).toBe(PUBLIC_URL)
   })
 
-  it("returns the CA with verification retained when the file exists", () => {
-    const ssl = buildPgSslConfig({ databaseUrl: BASE_URL, env: { PGSSLROOTCERT: pemPath } })
-    expect(ssl).toBeDefined()
-    expect(ssl!.ca).toBe(TEST_PEM)
-    expect(ssl!.rejectUnauthorized).toBe(true)
+  it("appends pg-native sslrootcert (verification retained) when the CA file exists", () => {
+    const derived = buildPgConnectionString({ databaseUrl: AIVEN_URL, env: { PGSSLROOTCERT: pemPath } })
+    expect(sslrootcertOf(derived)).toBe(pemPath)
+    // Original params preserved; nothing insecure injected.
+    expect(new URL(derived).searchParams.get("sslmode")).toBe("require")
+    expect(derived).not.toContain("no-verify")
+    expect(derived).not.toContain("rejectUnauthorized")
+    expect(derived).not.toContain("NODE_TLS_REJECT_UNAUTHORIZED")
   })
 
   it("throws a clear error when PGSSLROOTCERT points to a missing file", () => {
     const missing = path.join(tmpDir, "nope.pem")
-    expect(() => buildPgSslConfig({ databaseUrl: BASE_URL, env: { PGSSLROOTCERT: missing } })).toThrow(
+    expect(() => buildPgConnectionString({ databaseUrl: AIVEN_URL, env: { PGSSLROOTCERT: missing } })).toThrow(
       /PGSSLROOTCERT/,
     )
   })
@@ -57,21 +65,23 @@ describe("buildPgSslConfig (Aiven CA trust, verification always on)", () => {
   it("throws when the file is not a PEM certificate", () => {
     const bad = path.join(tmpDir, "bad.pem")
     fs.writeFileSync(bad, "definitely not a certificate", "utf8")
-    expect(() => buildPgSslConfig({ databaseUrl: BASE_URL, env: { PGSSLROOTCERT: bad } })).toThrow(
+    expect(() => buildPgConnectionString({ databaseUrl: AIVEN_URL, env: { PGSSLROOTCERT: bad } })).toThrow(
       /BEGIN CERTIFICATE/,
     )
   })
 
-  it("respects explicit sslmode=disable without forcing TLS on", () => {
-    const url = "postgresql://user:pass@host:5432/db?sslmode=disable"
-    expect(buildPgSslConfig({ databaseUrl: url, env: { PGSSLROOTCERT: pemPath } })).toBeUndefined()
+  it("fails fast with guidance on Aiven + TLS but no CA (instead of cryptic SELF_SIGNED_CERT_IN_CHAIN)", () => {
+    expect(() => buildPgConnectionString({ databaseUrl: AIVEN_URL, env: {} })).toThrow(/PGSSLROOTCERT/)
   })
 
-  it("never produces a verification-disabled config", () => {
-    // Every defined output must keep rejectUnauthorized: true. There is
-    // intentionally no input that yields rejectUnauthorized: false.
-    const ssl = buildPgSslConfig({ databaseUrl: BASE_URL, env: { PGSSLROOTCERT: pemPath } }) as any
-    expect(ssl.rejectUnauthorized).not.toBe(false)
-    expect(ssl).not.toHaveProperty("checkServerIdentity")
+  it("does not throw for Aiven with explicit sslmode=disable (operator opted out of TLS)", () => {
+    const url = "postgresql://user:pass@x.aivencloud.com:5432/db?sslmode=disable"
+    expect(buildPgConnectionString({ databaseUrl: url, env: {} })).toBe(url)
+  })
+
+  it("does not throw for publicly-trusted providers without a CA (behavior preserved)", () => {
+    expect(buildPgConnectionString({ databaseUrl: PUBLIC_URL, env: {} })).toBe(PUBLIC_URL)
+    const plain = "postgresql://user:pass@localhost:5432/dev"
+    expect(buildPgConnectionString({ databaseUrl: plain, env: {} })).toBe(plain)
   })
 })

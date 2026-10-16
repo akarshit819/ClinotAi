@@ -128,8 +128,11 @@ fully retained (see `scripts/pg-ssl.js`). Prisma needs no change.
    there on Linux).
 4. Keep `DATABASE_URL` unchanged (including any `?sslmode=` it already has).
    Never set `NODE_TLS_REJECT_UNAUTHORIZED=0` or `rejectUnauthorized: false`.
-5. Redeploy. Expect `[boot] PostgreSQL CA loaded (PGSSLROOTCERT=...)` in logs
+5. Redeploy. Expect `[boot] PostgreSQL CA configured (PGSSLROOTCERT=...)` in logs
    (path only — contents are never logged), then normal schema verification.
+   If instead boot aborts with "Aiven PostgreSQL host detected ... PGSSLROOTCERT
+   is not set", the Secret File or env var is missing — fix that and redeploy;
+   the launcher refuses to attempt an unverifiable handshake.
 
 ### Never set in production
 

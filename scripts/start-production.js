@@ -177,16 +177,18 @@ async function verifySchemaReadiness() {
 
   // TLS trust for providers with a private CA (e.g. Aiven). Without the
   // provider CA in the trust chain, pg fails at connect() with
-  // SELF_SIGNED_CERT_IN_CHAIN. buildPgSslConfig() returns undefined when
-  // PGSSLROOTCERT is unset, preserving existing behavior for providers
-  // whose chains are publicly trusted. Verification is never disabled.
-  const { buildPgSslConfig } = require("./pg-ssl")
-  const ssl = buildPgSslConfig({ databaseUrl, env: process.env })
-  if (ssl) {
+  // SELF_SIGNED_CERT_IN_CHAIN. buildPgConnectionString() appends pg's native
+  // `sslrootcert` parameter (pointing at PGSSLROOTCERT) to a pg-only copy of
+  // the URL — an explicit `ssl` object must NOT be passed next to
+  // `connectionString` because pg's parsed URL overwrites it. Verification
+  // is never disabled. Prisma keeps using the original DATABASE_URL.
+  const { buildPgConnectionString } = require("./pg-ssl")
+  const pgConnectionString = buildPgConnectionString({ databaseUrl, env: process.env })
+  if (process.env.PGSSLROOTCERT) {
     // Path only — never log certificate contents.
-    console.log(`[boot] PostgreSQL CA loaded (PGSSLROOTCERT=${process.env.PGSSLROOTCERT}, verification retained)`)
+    console.log(`[boot] PostgreSQL CA configured (PGSSLROOTCERT=${process.env.PGSSLROOTCERT}, verification retained)`)
   }
-  const client = new Client({ connectionString: databaseUrl, ...(ssl ? { ssl } : {}) })
+  const client = new Client({ connectionString: pgConnectionString })
   try {
     await client.connect()
     const r = await client.query(
