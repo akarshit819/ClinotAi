@@ -111,6 +111,26 @@ and no worker code, so it is safe in the Edge runtime.
 - `CSRF_SECRET` (falls back to `JWT_SECRET`), `LOG_LEVEL`,
   `NEXT_PUBLIC_GA_ID`, `NEXT_PUBLIC_APP_VERSION`
 
+### Aiven PostgreSQL CA certificate (only for private-CA providers)
+
+Render/Railway managed Postgres chains are publicly trusted — nothing extra is
+needed. Aiven signs its server certificates with a private CA, so the boot-time
+schema check (`scripts/start-production.js`, raw `pg` client) fails with
+`SELF_SIGNED_CERT_IN_CHAIN` unless the Aiven CA is trusted. The launcher reads
+the standard `PGSSLROOTCERT` path and passes the CA to `pg` with verification
+fully retained (see `scripts/pg-ssl.js`). Prisma needs no change.
+
+1. Download `ca.pem` from the Aiven console (Overview → Connection information).
+   Do NOT commit it to git.
+2. Render dashboard → service → Environment → **Secret Files** → add a secret
+   file named `ca.pem` and paste the certificate contents.
+3. Add env var `PGSSLROOTCERT=/etc/secrets/ca.pem` (Render mounts secret files
+   there on Linux).
+4. Keep `DATABASE_URL` unchanged (including any `?sslmode=` it already has).
+   Never set `NODE_TLS_REJECT_UNAUTHORIZED=0` or `rejectUnauthorized: false`.
+5. Redeploy. Expect `[boot] PostgreSQL CA loaded (PGSSLROOTCERT=...)` in logs
+   (path only — contents are never logged), then normal schema verification.
+
 ### Never set in production
 
 - `CLINOT_SEED_DEMO`, `CLINOT_DEV_SEED`, `CLINOT_DEV_USER_PASSWORD`

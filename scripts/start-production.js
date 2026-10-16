@@ -175,7 +175,18 @@ async function verifySchemaReadiness() {
     throw err
   }
 
-  const client = new Client({ connectionString: databaseUrl })
+  // TLS trust for providers with a private CA (e.g. Aiven). Without the
+  // provider CA in the trust chain, pg fails at connect() with
+  // SELF_SIGNED_CERT_IN_CHAIN. buildPgSslConfig() returns undefined when
+  // PGSSLROOTCERT is unset, preserving existing behavior for providers
+  // whose chains are publicly trusted. Verification is never disabled.
+  const { buildPgSslConfig } = require("./pg-ssl")
+  const ssl = buildPgSslConfig({ databaseUrl, env: process.env })
+  if (ssl) {
+    // Path only — never log certificate contents.
+    console.log(`[boot] PostgreSQL CA loaded (PGSSLROOTCERT=${process.env.PGSSLROOTCERT}, verification retained)`)
+  }
+  const client = new Client({ connectionString: databaseUrl, ...(ssl ? { ssl } : {}) })
   try {
     await client.connect()
     const r = await client.query(

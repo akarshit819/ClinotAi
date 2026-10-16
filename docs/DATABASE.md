@@ -35,6 +35,11 @@ Prisma migrations live in `prisma/migrations/`. The initial migration `202608160
 
 The demo seed (`src/seed.ts`) is deliberately **not** part of the boot sequence and is blocked in production.
 
+> Private-CA providers (e.g. Aiven): the launcher's post-migration schema check connects via raw `pg`
+> and needs the provider CA. Set `PGSSLROOTCERT` to the mounted CA PEM (Render: Secret File
+> `ca.pem` → `PGSSLROOTCERT=/etc/secrets/ca.pem`); see `docs/RENDER-DEPLOYMENT.md`. Verification is
+> never disabled.
+
 ## Data preservation / migration
 
 ### Existing production data

@@ -15,6 +15,7 @@
 | Variable | Required | Purpose |
 |---|---|---|
 | `DATABASE_URL` | Yes | PostgreSQL connection string (also backs the job queue). |
+| `PGSSLROOTCERT` | Private-CA providers only (e.g. Aiven) | Filesystem path to the provider CA PEM; boot trusts it with verification retained. Unset otherwise. |
 | `JWT_SECRET` | Yes (32+ chars) | Session/token signing. |
 | `ENCRYPTION_KEY` | Yes (32+ chars) | AES-256-GCM for stored credentials — keep stable once set. |
 | `CSRF_SECRET` | Yes (32+ chars) | CSRF token secret (falls back to `JWT_SECRET` in dev only). |
